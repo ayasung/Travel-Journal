@@ -1,23 +1,24 @@
 /**
- * 반응형 올인원 여행 플래너 웹 앱 - app.js (로드맵 4단계 완결판)
+ * 반응형 올인원 여행 플래너 웹 앱 - app.js (실시간 환율 API 2중화 + Firebase 하이브리드 완결판)
  * - Playcode / Web 전역 실행 보장 (모든 상호작용 함수 window 바인딩)
- * - 동적 PWA Web App Manifest Blob URL 자동 등록 (Android Chrome / iOS Safari 독립 앱 실행 지원)
- * - 최소 송금 횟수(Greedy Debt Simplification) 기반 최종 정산 계산기 (#settlementSummaryBox)
- * - 원클릭 카톡 정산서 복사 (copySettlementToClipboard / copySettlementText)
- * - A4 여행 리포트 통합 생성 및 인쇄 / PDF 내보내기 (printTripReport)
- * - Firebase 실시간 동기화 + 로컬 Fallback 하이브리드 & 공용/개인 데이터 분리 아키텍처 완비
+ * - 실시간 환율 조회 2중 API:
+ *   1순위: https://open.er-api.com/v6/latest/{통화코드}
+ *   2순위: https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{소문자통화코드}.json
+ * - 모든 외화 '1 외화 = OOO.OO 대표통화(KRW 등)' 소수점 둘째 자리(toFixed(2)) 통일
+ * - 지출/예약 모달 통화 변경 및 [최신 환율 불러오기] 즉시 API 호출 & 자동 입력
+ * - 상단 환율 스냅샷 갱신 시각(MM/DD HH:mm 기준) 표시 및 Firestore 즉시 동기화
  */
 
 // ==========================================
 // 0. Firebase 설정 템플릿 (발급받은 키를 붙여넣으면 즉시 실시간 동기화 모드로 전환됩니다)
 // ==========================================
 const firebaseConfig = {
-  apiKey: "AIzaSyBp6NVo7O-ya5MfcmI1_NvnKKLnH3tGF3k",
-  authDomain: "travel-journal-8dfd3.firebaseapp.com",
-  projectId: "travel-journal-8dfd3",
-  storageBucket: "travel-journal-8dfd3.firebasestorage.app",
-  messagingSenderId: "210219932082",
-  appId: "1:210219932082:web:5afb3349cab5e09725acab"
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
 };
 
 // ==========================================
@@ -80,17 +81,21 @@ const MULTI_TRIP_STORAGE_KEY = 'ALL_IN_ONE_MULTI_TRIP_ARCHIVE_V2';
 const LEGACY_SINGLE_STORAGE_KEY = 'ALL_IN_ONE_TRAVEL_PLANNER_DATA';
 const DEVICE_USER_ID_KEY = 'ALL_IN_ONE_TRAVEL_DEVICE_USER_ID';
 
-const DEFAULT_RATES_TO_KRW = {
-  KRW: 1,
+// 오프라인 최후 Fallback 전용 기본 환율 테이블 (1 외화 = OOO.OO KRW)
+const FALLBACK_RATES_TO_KRW = {
+  KRW: 1.00,
   JPY: 9.15,
-  USD: 1380.0,
-  EUR: 1490.0,
-  GBP: 1750.0,
-  TWD: 43.0,
-  THB: 38.0,
-  VND: 0.055,
-  CNY: 192.0
+  USD: 1395.50,
+  EUR: 1490.00,
+  GBP: 1750.00,
+  TWD: 43.00,
+  THB: 38.50,
+  VND: 0.06,
+  CNY: 193.00
 };
+
+// 세션 내 조회된 실시간 환율 캐시 (통화쌍 -> 소수점 2자리 숫자)
+const liveRateCache = {};
 
 const AIRLINE_PREFIX_MAP = {
   'RS': '에어서울',
@@ -230,7 +235,92 @@ let selectedReviewPhotoIds = [];
 let isExchangeSectionOpen = true;
 
 // ==========================================
-// 3. Firebase 초기화 및 동기화 상태 배지 제어
+// 3. 실시간 환율 API 조회 엔진 (1순위 open.er-api.com -> 2순위 jsdelivr currency-api)
+// ==========================================
+/**
+ * 1 외화(foreignCurr) = OOO.OO 기준통화(baseCurr, 기본 KRW) 실시간 환율 조회
+ * - 1순위: https://open.er-api.com/v6/latest/{통화코드}
+ * - 2순위: https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{소문자통화코드}.json
+ * - 반환값: 소수점 둘째 자리 반올림 숫자 (예: 9.15, 1395.50)
+ */
+async function fetchLiveExchangeRate(foreignCurr, baseCurr = 'KRW') {
+  const fromCode = (foreignCurr || 'KRW').trim().toUpperCase();
+  const toCode = (baseCurr || 'KRW').trim().toUpperCase();
+
+  if (fromCode === toCode) return 1.00;
+
+  const cacheKey = `${fromCode}_${toCode}`;
+  let fetchedRate = null;
+
+  // [1순위] open.er-api.com 호출
+  try {
+    const res1 = await fetch(`https://open.er-api.com/v6/latest/${encodeURIComponent(fromCode)}`, {
+      cache: 'no-store'
+    });
+    if (res1.ok) {
+      const data1 = await res1.json();
+      if (data1 && data1.result === 'success' && data1.rates && typeof data1.rates[toCode] === 'number') {
+        fetchedRate = data1.rates[toCode];
+      }
+    }
+  } catch (err1) {
+    console.warn(`[환율 1순위 API 실패: ${fromCode}->${toCode}]`, err1);
+  }
+
+  // [2순위] jsdelivr currency-api 호출 (1순위 실패 시 Fallback)
+  if (!(fetchedRate > 0)) {
+    try {
+      const lowerFrom = fromCode.toLowerCase();
+      const lowerTo = toCode.toLowerCase();
+      const res2 = await fetch(
+        `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${encodeURIComponent(lowerFrom)}.json`,
+        { cache: 'no-store' }
+      );
+      if (res2.ok) {
+        const data2 = await res2.json();
+        if (data2 && data2[lowerFrom] && typeof data2[lowerFrom][lowerTo] === 'number') {
+          fetchedRate = data2[lowerFrom][lowerTo];
+        }
+      }
+    } catch (err2) {
+      console.warn(`[환율 2순위 API 실패: ${fromCode}->${toCode}]`, err2);
+    }
+  }
+
+  // API 모두 실패 시 내장 기본값 사용
+  if (!(fetchedRate > 0)) {
+    fetchedRate = getFallbackRateToBase(fromCode, toCode);
+  }
+
+  const roundedRate = Number(Number(fetchedRate).toFixed(2));
+  liveRateCache[cacheKey] = roundedRate;
+  return roundedRate;
+}
+
+function getFallbackRateToBase(foreignCurr, baseCurr = 'KRW') {
+  const f = (foreignCurr || 'KRW').trim().toUpperCase();
+  const b = (baseCurr || 'KRW').trim().toUpperCase();
+  if (f === b) return 1.00;
+
+  const cacheKey = `${f}_${b}`;
+  if (Number(liveRateCache[cacheKey]) > 0) {
+    return Number(Number(liveRateCache[cacheKey]).toFixed(2));
+  }
+
+  const fInKrw = FALLBACK_RATES_TO_KRW[f] || 1;
+  const bInKrw = FALLBACK_RATES_TO_KRW[b] || 1;
+  const rate = fInKrw / bInKrw;
+  return Number(rate.toFixed(2));
+}
+
+function formatShortSyncTimestamp() {
+  const now = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `${pad(now.getMonth() + 1)}/${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())} 기준`;
+}
+
+// ==========================================
+// 4. Firebase 초기화 및 동기화 상태 배지 제어
 // ==========================================
 function updateSyncStatusBadges(cloudConnected) {
   const badges = ['homeSyncStatusBadge', 'detailSyncStatusBadge'];
@@ -276,7 +366,7 @@ function initFirebaseHybrid() {
 }
 
 // ==========================================
-// 4. 방어형 DOM 접근 및 클립보드·환율 헬퍼
+// 5. 방어형 DOM 접근 및 클립보드·환율 헬퍼
 // ==========================================
 function getEl(id) {
   return document.getElementById(id);
@@ -340,9 +430,7 @@ function fallbackCopyText(textStr, successMsg) {
 }
 
 function getNowTimestampStr() {
-  const now = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  return formatShortSyncTimestamp();
 }
 
 function generateInviteCode() {
@@ -371,16 +459,6 @@ function getMeName(trip) {
   return '나';
 }
 
-function getDefaultRateToBase(foreignCurr, baseCurr) {
-  const f = (foreignCurr || 'KRW').trim().toUpperCase();
-  const b = (baseCurr || 'KRW').trim().toUpperCase();
-  if (f === b) return 1;
-  const fInKrw = DEFAULT_RATES_TO_KRW[f] || 1;
-  const bInKrw = DEFAULT_RATES_TO_KRW[b] || 1;
-  const rate = fInKrw / bInKrw;
-  return rate >= 1 ? Number(rate.toFixed(2)) : Number(rate.toFixed(4));
-}
-
 function getAverageExchangeRateForCurrency(trip, foreignCurr) {
   const exchanges = trip?.privateBudget?.exchanges || [];
   const target = (foreignCurr || '').trim().toUpperCase();
@@ -395,7 +473,7 @@ function getAverageExchangeRateForCurrency(trip, foreignCurr) {
   });
   if (totalForeign <= 0) return null;
   const avg = totalBase / totalForeign;
-  return avg >= 1 ? Number(avg.toFixed(2)) : Number(avg.toFixed(4));
+  return Number(avg.toFixed(2));
 }
 
 function getItemConvertedAmount(item, baseCurr) {
@@ -407,14 +485,11 @@ function getItemConvertedAmount(item, baseCurr) {
 
   const rate = (Number(item.appliedRate) > 0)
     ? Number(item.appliedRate)
-    : getDefaultRateToBase(curr, base);
+    : getFallbackRateToBase(curr, base);
 
   return amount * rate;
 }
 
-/**
- * 모든 지출 항목을 원화(KRW) 환산 금액으로 변환 (최소 송금 정산 계산기용)
- */
 function getItemConvertedToKRW(exp, baseCurr) {
   const amount = Number(exp.amount) || 0;
   const curr = (exp.currency || baseCurr || 'KRW').trim().toUpperCase();
@@ -424,15 +499,15 @@ function getItemConvertedToKRW(exp, baseCurr) {
   if (base === 'KRW') {
     const rateToKrw = (Number(exp.appliedRate) > 0)
       ? Number(exp.appliedRate)
-      : (DEFAULT_RATES_TO_KRW[curr] || 1);
+      : (FALLBACK_RATES_TO_KRW[curr] || 1);
     return amount * rateToKrw;
   }
 
   const rateToBase = (Number(exp.appliedRate) > 0)
     ? Number(exp.appliedRate)
-    : getDefaultRateToBase(curr, base);
+    : getFallbackRateToBase(curr, base);
   const inBase = amount * rateToBase;
-  const baseToKrw = DEFAULT_RATES_TO_KRW[base] || 1;
+  const baseToKrw = FALLBACK_RATES_TO_KRW[base] || 1;
   return inBase * baseToKrw;
 }
 
@@ -468,10 +543,10 @@ function ensureExpenseSchema(exp, defaultMe = '나', baseCurr = 'KRW') {
 
   const curr = (exp.currency || baseCurr).trim().toUpperCase();
   if (!(Number(exp.appliedRate) > 0)) {
-    exp.appliedRate = getDefaultRateToBase(curr, baseCurr);
+    exp.appliedRate = getFallbackRateToBase(curr, baseCurr);
   }
   if (!exp.rateTimestamp) {
-    exp.rateTimestamp = '2026-11-12 00:00';
+    exp.rateTimestamp = formatShortSyncTimestamp();
   }
   exp.convertedAmount = Math.round((Number(exp.amount) || 0) * Number(exp.appliedRate));
 
@@ -492,7 +567,8 @@ function createTripObject({
   members = ['나'],
   baseCurrency = 'KRW',
   totalBudget = 0,
-  ratesSyncTime = '2026-11-12 00:00',
+  ratesSyncTime = null,
+  latestSnapshotText = '',
   schedules = [],
   spots = [],
   reservations = [],
@@ -520,11 +596,11 @@ function createTripObject({
         const resCurr = (r.currency || cleanBaseCurr).trim().toUpperCase();
         const appliedRate = (Number(r.appliedRate) > 0)
           ? Number(r.appliedRate)
-          : getDefaultRateToBase(resCurr, cleanBaseCurr);
+          : getFallbackRateToBase(resCurr, cleanBaseCurr);
         return {
           ...r,
           appliedRate,
-          rateTimestamp: r.rateTimestamp || ratesSyncTime || '2026-11-12 00:00',
+          rateTimestamp: r.rateTimestamp || ratesSyncTime || formatShortSyncTimestamp(),
           convertedAmount: Math.round((Number(r.amount) || 0) * appliedRate)
         };
       })
@@ -543,7 +619,8 @@ function createTripObject({
       members: cleanMembers,
       baseCurrency: cleanBaseCurr,
       currencies: ['KRW', 'JPY', 'USD', 'EUR'],
-      ratesSyncTime: ratesSyncTime || '2026-11-12 00:00',
+      ratesSyncTime: ratesSyncTime || formatShortSyncTimestamp(),
+      latestSnapshotText: latestSnapshotText || '',
       schedules: Array.isArray(schedules) ? schedules : [],
       spots: Array.isArray(spots) ? spots : [],
       reservations: cleanReservations,
@@ -584,7 +661,8 @@ function normalizeTripSchema(rawTrip) {
       members: rawTrip.shared.members,
       baseCurrency: privSource.currency || rawTrip.shared.baseCurrency || 'KRW',
       totalBudget: privSource.totalBudget || 0,
-      ratesSyncTime: rawTrip.shared.ratesSyncTime || '2026-11-12 00:00',
+      ratesSyncTime: rawTrip.shared.ratesSyncTime || formatShortSyncTimestamp(),
+      latestSnapshotText: rawTrip.shared.latestSnapshotText || '',
       schedules: rawTrip.shared.schedules || [],
       spots: rawTrip.shared.spots || rawTrip.shared.candidates || [],
       reservations: rawTrip.shared.reservations || [],
@@ -607,7 +685,7 @@ function normalizeTripSchema(rawTrip) {
       members: rawTrip.tripInfo.members || ['나'],
       baseCurrency: rawTrip.budget?.baseCurrency || 'KRW',
       totalBudget: rawTrip.budget?.amount || 0,
-      ratesSyncTime: rawTrip.budget?.ratesSyncTime || '2026-11-12 00:00',
+      ratesSyncTime: rawTrip.budget?.ratesSyncTime || formatShortSyncTimestamp(),
       schedules: rawTrip.schedules || [],
       spots: rawTrip.candidates || [],
       reservations: rawTrip.reservations || [],
@@ -626,7 +704,7 @@ function normalizeTripSchema(rawTrip) {
 }
 
 // ==========================================
-// 5. 하이브리드 저장소 동기화 (LocalStorage + Firestore 실시간 구독)
+// 6. 하이브리드 저장소 동기화 (LocalStorage + Firestore 실시간 구독)
 // ==========================================
 function loadLocalTripsFromStorage() {
   try {
@@ -779,7 +857,56 @@ function startFirestoreRealtimeSubscription() {
 }
 
 // ==========================================
-// 6. [전역 바인딩] 뷰 전환: 홈(#homeView) <-> 상세(#tripDetailView)
+// 7. [신규] 상단 환율 스냅샷 실시간 갱신 (`refreshTopExchangeSnapshot`)
+// ==========================================
+window.refreshTopExchangeSnapshot = async function() {
+  const trip = getActiveTrip();
+  if (!trip) return;
+
+  const baseCurr = (trip.privateBudget.currency || trip.shared.baseCurrency || 'KRW').trim().toUpperCase();
+  const syncEl = getEl('exchangeRateSyncTime');
+  if (syncEl) syncEl.textContent = '실시간 환율 조회 중...';
+
+  // 현재 여행에서 사용 중인 주요 통화들(JPY, USD, EUR 등)의 실시간 환율 일괄 조회
+  const targetCurrencies = ['JPY', 'USD', 'EUR'].filter(c => c !== baseCurr);
+  const summaryParts = [];
+
+  for (const curr of targetCurrencies) {
+    const rate = await fetchLiveExchangeRate(curr, baseCurr);
+    summaryParts.push(`1 ${curr} = ${rate.toFixed(2)} ${baseCurr}`);
+  }
+
+  const timeLabel = formatShortSyncTimestamp();
+  const snapshotText = `${timeLabel} (${summaryParts.join(' · ')})`;
+
+  trip.shared.ratesSyncTime = timeLabel;
+  trip.shared.latestSnapshotText = snapshotText;
+
+  saveAllTripsToStorage(trip);
+  renderExchangeSnapshotHeader(trip);
+};
+
+function renderExchangeSnapshotHeader(trip) {
+  const syncEl = getEl('exchangeRateSyncTime');
+  if (!syncEl || !trip) return;
+
+  const sh = trip.shared;
+  const displayStr = sh.latestSnapshotText
+    ? `환율: ${sh.latestSnapshotText}`
+    : `환율: ${sh.ratesSyncTime || formatShortSyncTimestamp()}`;
+
+  syncEl.innerHTML = `
+    <span class="inline-flex items-center gap-1.5 flex-wrap">
+      <span>${escapeHtml(displayStr)}</span>
+      <button type="button" onclick="window.refreshTopExchangeSnapshot()" class="px-1.5 py-0.5 bg-sky-50 hover:bg-sky-100 text-sky-700 border border-sky-200 rounded text-[10px] font-bold transition" title="최신 실시간 환율 스냅샷 갱신">
+        갱신 🔄
+      </button>
+    </span>
+  `;
+}
+
+// ==========================================
+// 8. [전역 바인딩] 뷰 전환: 홈(#homeView) <-> 상세(#tripDetailView)
 // ==========================================
 window.goBackToHome = function() {
   currentTripId = null;
@@ -812,10 +939,15 @@ window.enterTripDetail = function(tripId) {
   if (bDates) bDates.className = 'py-2.5 rounded-lg text-slate-500 transition';
 
   window.renderAll();
+
+  // 상세 진입 시 스냅샷 텍스트가 비어있으면 백그라운드에서 최신 환율 자동 조회
+  if (!target.shared.latestSnapshotText) {
+    window.refreshTopExchangeSnapshot();
+  }
 };
 
 // ==========================================
-// 7. [전역 바인딩] 홈 화면 (#homeView) 렌더링 & 새 여행/초대 합류/삭제
+// 9. [전역 바인딩] 홈 화면 (#homeView) 렌더링 & 새 여행/초대 합류/삭제
 // ==========================================
 function getTripStatusBadge(startDateStr, endDateStr) {
   const todayStr = new Date().toISOString().split('T')[0];
@@ -1090,11 +1222,11 @@ window.copyCurrentInviteCode = function() {
 };
 
 // ==========================================
-// 8. [전역 바인딩] 전체 백업 / 복원
+// 10. [전역 바인딩] 전체 백업 / 복원
 // ==========================================
 window.backupAllData = function() {
   const payload = {
-    version: '4.0-multi-trip-pwa',
+    version: '4.1-multi-trip-live-fx',
     exportedAt: new Date().toISOString(),
     trips
   };
@@ -1150,7 +1282,7 @@ window.handleRestoreFile = function(e) {
 };
 
 // ==========================================
-// 9. [신규 4단계] 여행 리포트 인쇄 / PDF 아카이브 생성 (`printTripReport`)
+// 11. 여행 리포트 인쇄 / PDF 아카이브 생성 (`printTripReport`)
 // ==========================================
 window.printTripReport = function() {
   const trip = getActiveTrip();
@@ -1167,7 +1299,6 @@ window.printTripReport = function() {
   const baseCurr = (trip.privateBudget.currency || sh.baseCurrency || 'KRW').trim().toUpperCase();
   const totalDays = calculateTotalDays();
 
-  // 1) 일차별 일정 요약 HTML
   let schedulesHtml = '';
   for (let d = 1; d <= totalDays; d++) {
     const dayDate = getDateStringForDay(d);
@@ -1193,7 +1324,6 @@ window.printTripReport = function() {
     `;
   }
 
-  // 2) 예약 요약 HTML
   const reservationsHtml = sh.reservations.length === 0
     ? '<p style="font-size: 9.5pt; color: #94a3b8;">등록된 예약 내역 없음</p>'
     : sh.reservations.map(r => {
@@ -1205,7 +1335,6 @@ window.printTripReport = function() {
         return `<div style="font-size: 9.5pt; margin-bottom: 4px;">• ${escapeHtml(title)}${escapeHtml(codeInfo)}${escapeHtml(amtInfo)}</div>`;
       }).join('');
 
-  // 3) 지출 및 최종 정산 요약 HTML
   const settlementCalc = computeMinimumTransfersKRW(trip);
   const transfersHtml = settlementCalc.transfers.length === 0
     ? '<p style="font-size: 9.5pt; color: #059669;">모든 정산이 완료되었습니다.</p>'
@@ -1221,7 +1350,6 @@ window.printTripReport = function() {
         return `<div style="font-size: 9.5pt; margin-bottom: 3px;">• ${escapeHtml(ex.title)} — ${Number(ex.amount).toLocaleString()} ${ex.currency} (약 ${krwVal.toLocaleString()}원 / 결제: ${escapeHtml(ex.payer)} / 참여: ${escapeHtml(ex.participants.join(', '))})</div>`;
       }).join('');
 
-  // 4) 장소 리뷰 아카이브 HTML
   const reviewsHtml = sh.reviews.length === 0
     ? '<p style="font-size: 9.5pt; color: #94a3b8;">등록된 리뷰 기록 없음</p>'
     : sh.reviews.map(rv => {
@@ -1264,18 +1392,13 @@ window.printTripReport = function() {
 };
 
 // ==========================================
-// 10. [신규 4단계] 최소 송금 횟수 기반 '최종 정산 계산기' & 카톡 정산서 복사
+// 12. 최소 송금 횟수 기반 '최종 정산 계산기' & 카톡 정산서 복사
 // ==========================================
-/**
- * 미정산 지출 내역을 기반으로 멤버별 실제 결제 총액과 1/N 분담 부담액의 차액(순채권/순채무)을
- * 원화(KRW) 환산 기준으로 집계하고, 최소 송금 횟수(Greedy 매칭) 이체 리스트를 산출합니다.
- */
 function computeMinimumTransfersKRW(trip) {
   const me = getMeName(trip);
   const baseCurr = (trip.privateBudget.currency || trip.shared.baseCurrency || 'KRW').trim().toUpperCase();
   const members = Array.isArray(trip.shared.members) ? trip.shared.members.map(m => String(m).trim()).filter(Boolean) : [me];
 
-  // 멤버별 순 잔액(netBalance): +면 받을 돈(채권자), -면 보낼 돈(채무자)
   const netBalance = {};
   members.forEach(m => { netBalance[m] = 0; });
 
@@ -1302,21 +1425,18 @@ function computeMinimumTransfersKRW(trip) {
 
     if (netBalance[payerClean] === undefined) netBalance[payerClean] = 0;
 
-    // 미정산된 참여자들에 대해서만 결제자와 참여자 간 채권/채무 반영
     participants.forEach(memberClean => {
       if (netBalance[memberClean] === undefined) netBalance[memberClean] = 0;
-      if (memberClean === payerClean) return; // 본인 몫은 상계
+      if (memberClean === payerClean) return;
 
       const isAlreadySettled = (settledMap[memberClean] === true);
       if (!isAlreadySettled) {
-        // 결제자는 perPersonKRW 만큼 돌려받을 권리(+), 참여자는 보낼 의무(-)
         netBalance[payerClean] += perPersonKRW;
         netBalance[memberClean] -= perPersonKRW;
       }
     });
   });
 
-  // 채무자(보낼 사람)와 채권자(받을 사람) 분리 후 Greedy 최소 이체 매칭
   const debtors = [];
   const creditors = [];
 
@@ -1368,9 +1488,6 @@ function computeMinimumTransfersKRW(trip) {
   };
 }
 
-/**
- * 지출 탭 상단 [최종 송금 정산 요약] 카드(#settlementSummaryBox) 렌더링
- */
 window.renderSettlementSummary = function() {
   const trip = getActiveTrip();
   const box = getEl('settlementSummaryBox');
@@ -1411,9 +1528,6 @@ window.renderSettlementSummary = function() {
   `;
 };
 
-/**
- * 원클릭 [정산 내역 카톡 복사 💸] 핸들러
- */
 window.copySettlementToClipboard = function() {
   const trip = getActiveTrip();
   if (!trip) return;
@@ -1444,11 +1558,10 @@ window.copySettlementToClipboard = function() {
   copyTextToClipboard(lines.join('\n'), '정산 내역이 카카오톡 공유 포맷으로 클립보드에 복사되었습니다! 💸');
 };
 
-// 기존 버튼 연결명 하위 호환 유지
 window.copySettlementText = window.copySettlementToClipboard;
 
 // ==========================================
-// 11. 날짜/일차 계산 유틸리티
+// 13. 날짜/일차 계산 유틸리티
 // ==========================================
 function calculateTotalDays() {
   const trip = getActiveTrip();
@@ -1509,7 +1622,7 @@ function analyzeDateAndTimeAgainstTrip(dateStr, timeStr = '09:00') {
 }
 
 // ==========================================
-// 12. ✨ AI 일정 추천 프롬프트 생성 & JSON 파싱 일괄 등록
+// 14. ✨ AI 일정 추천 프롬프트 생성 & JSON 파싱 일괄 등록
 // ==========================================
 window.openAiScheduleModal = function() {
   const trip = getActiveTrip();
@@ -1656,7 +1769,7 @@ window.importAiSchedulesFromJson = function() {
 };
 
 // ==========================================
-// 13. 카톡/메신저 공유용 당일 일정 텍스트 복사
+// 15. 카톡/메신저 공유용 당일 일정 텍스트 복사
 // ==========================================
 window.copyDayScheduleText = function() {
   const trip = getActiveTrip();
@@ -1698,7 +1811,7 @@ window.copyDayScheduleText = function() {
 };
 
 // ==========================================
-// 14. 개인 예산 내 환전 내역(privateBudget.exchanges) 관리
+// 16. 개인 예산 내 환전 내역(privateBudget.exchanges) 관리
 // ==========================================
 window.toggleExchangeSection = function() {
   isExchangeSectionOpen = !isExchangeSectionOpen;
@@ -1742,8 +1855,7 @@ window.updateExchangeCalcPreview = function() {
     calcRate = bAmt / fAmt;
   }
 
-  const formattedRate = calcRate >= 1 ? calcRate.toFixed(2) : calcRate.toFixed(4);
-  setText('exCalculatedRateText', `1 ${fCurr} = ${formattedRate} ${baseCurr}`);
+  setText('exCalculatedRateText', `1 ${fCurr} = ${calcRate.toFixed(2)} ${baseCurr}`);
 };
 
 window.saveExchangeRecord = function(e) {
@@ -1763,8 +1875,7 @@ window.saveExchangeRecord = function(e) {
     return;
   }
 
-  const rawRate = baseAmount / foreignAmount;
-  const appliedRate = rawRate >= 1 ? Number(rawRate.toFixed(2)) : Number(rawRate.toFixed(4));
+  const appliedRate = Number((baseAmount / foreignAmount).toFixed(2));
 
   if (!Array.isArray(trip.privateBudget.exchanges)) {
     trip.privateBudget.exchanges = [];
@@ -1835,12 +1946,11 @@ function renderExchangeHistory(trip) {
   Object.keys(currencySummary).forEach(c => {
     const s = currencySummary[c];
     const avgRate = s.totalForeign > 0 ? (s.totalBase / s.totalForeign) : 0;
-    const avgStr = avgRate >= 1 ? avgRate.toFixed(2) : avgRate.toFixed(4);
     summaryHtml += `
       <div class="bg-sky-50/70 border border-sky-100 rounded-xl px-2.5 py-2 flex items-center justify-between text-[11px]">
         <div>
           <span class="font-bold text-sky-900">${c} 총 환전: ${s.totalForeign.toLocaleString()} ${c}</span>
-          <span class="text-[10px] text-sky-600 block">평균 환율: 1 ${c} = ${avgStr} ${baseCurr}</span>
+          <span class="text-[10px] text-sky-600 block">평균 환율: 1 ${c} = ${avgRate.toFixed(2)} ${baseCurr}</span>
         </div>
         <div class="text-right">
           <span class="text-[10px] text-slate-400 block">지불 합계</span>
@@ -1854,14 +1964,13 @@ function renderExchangeHistory(trip) {
   let rowsHtml = '<div class="space-y-1 pt-1">';
   exchanges.forEach(ex => {
     const rateVal = Number(ex.appliedRate) || 0;
-    const rateStr = rateVal >= 1 ? rateVal.toFixed(2) : rateVal.toFixed(4);
     rowsHtml += `
       <div class="flex items-center justify-between bg-slate-50 border border-slate-100 rounded-lg px-2.5 py-1.5 text-[11px]">
         <div class="min-w-0 flex-1 pr-2">
           <div class="flex items-center gap-1.5">
             <span class="font-bold text-slate-700">${Number(ex.foreignAmount).toLocaleString()} ${escapeHtml(ex.currency)}</span>
             <span class="text-[10px] text-slate-400">(${Math.round(Number(ex.baseAmount)).toLocaleString()} ${baseCurr})</span>
-            <span class="text-[10px] font-mono text-sky-600 bg-sky-50 px-1 rounded">@${rateStr}</span>
+            <span class="text-[10px] font-mono text-sky-600 bg-sky-50 px-1 rounded">1 ${escapeHtml(ex.currency)} = ${rateVal.toFixed(2)} ${baseCurr}</span>
           </div>
           <div class="text-[10px] text-slate-400 truncate">
             ${ex.date ? escapeHtml(ex.date) : ''} ${ex.memo ? `· ${escapeHtml(ex.memo)}` : ''}
@@ -1879,7 +1988,7 @@ function renderExchangeHistory(trip) {
 }
 
 // ==========================================
-// 15. 개인 여행 예산 & 잔여 비율(100% -> 0%) 게이지 계산
+// 17. 개인 여행 예산 & 잔여 비율(100% -> 0%) 게이지 계산
 // ==========================================
 window.renderBudget = function(tripParam = null) {
   const trip = tripParam || getActiveTrip();
@@ -1891,7 +2000,7 @@ window.renderBudget = function(tripParam = null) {
   const totalBudget = Number(priv.totalBudget) || 0;
   const me = getMeName(trip);
 
-  setText('exchangeRateSyncTime', `환율 기준: ${sh.ratesSyncTime || '2026-11-12 00:00'}`);
+  renderExchangeSnapshotHeader(trip);
   setText('baseCurrencyDisplay', baseCurr);
   setText('remainCurrencyDisplay', baseCurr);
   setText('budgetTotalDisplay', totalBudget.toLocaleString());
@@ -1975,7 +2084,7 @@ window.renderBudget = function(tripParam = null) {
 };
 
 // ==========================================
-// 16. 상세 화면 렌더링 총괄 파이프라인
+// 18. 상세 화면 렌더링 총괄 파이프라인
 // ==========================================
 window.renderAll = function() {
   const trip = getActiveTrip();
@@ -2078,7 +2187,7 @@ function renderActiveSubView() {
 }
 
 // ==========================================
-// 17. [전역 바인딩] 모달 & 뷰/서브탭 전환
+// 19. [전역 바인딩] 모달 & 뷰/서브탭 전환
 // ==========================================
 window.openModal = function(modalId) {
   const el = getEl(modalId);
@@ -2111,7 +2220,7 @@ window.switchSubTab = function(tabName) {
 };
 
 // ==========================================
-// 18. [전역 바인딩] 상세 화면 여행 정보 & 개인 예산 설정
+// 20. [전역 바인딩] 상세 화면 여행 정보 & 개인 예산 설정
 // ==========================================
 window.openTripInfoModal = function() {
   const trip = getActiveTrip();
@@ -2189,7 +2298,7 @@ window.saveBudget = function(e) {
 };
 
 // ==========================================
-// 19. [전역 바인딩] 일정표 & 동선 지도 & 후보 스폿
+// 21. [전역 바인딩] 일정표 & 동선 지도 & 후보 스폿
 // ==========================================
 window.renderTimeline = function() {
   const trip = getActiveTrip();
@@ -2483,7 +2592,7 @@ window.deleteCandidate = function(candidateId) {
 };
 
 // ==========================================
-// 20. [전역 바인딩] 예약 등록/수정 & 적용 환율 스냅샷/개별 갱신
+// 22. [전역 바인딩] 예약 등록/수정 & 실시간 환율 API 조회/갱신
 // ==========================================
 window.handleReservationCategoryChange = function(category) {
   const flightWrap = getEl('resFlightFieldsWrapper');
@@ -2498,7 +2607,10 @@ window.handleReservationCategoryChange = function(category) {
   }
 };
 
-window.updateReservationRatePreview = function(resetRateToDefault = false) {
+/**
+ * 예약 모달 내 적용 환율 안내 박스 동기화 및 실시간 API 자동 조회
+ */
+window.updateReservationRatePreview = async function(autoFetchLive = false) {
   const trip = getActiveTrip();
   if (!trip) return;
 
@@ -2518,30 +2630,32 @@ window.updateReservationRatePreview = function(resetRateToDefault = false) {
   setText('resRateBaseUnitLabel', baseCurr);
 
   let rate = Number(getVal('inputResAppliedRate'));
-  if (resetRateToDefault || !(rate > 0)) {
-    const avgExRate = getAverageExchangeRateForCurrency(trip, resCurr);
-    rate = avgExRate || getDefaultRateToBase(resCurr, baseCurr);
-    setVal('inputResAppliedRate', rate);
+  if (autoFetchLive || !(rate > 0)) {
+    setText('resRateSummaryText', `실시간 환율 조회 중... (1 ${resCurr} ➔ ${baseCurr})`);
+    rate = await fetchLiveExchangeRate(resCurr, baseCurr);
+    setVal('inputResAppliedRate', rate.toFixed(2));
   }
 
   const converted = Math.round(amount * rate);
-  setText('resRateSummaryText', `기준: 1 ${resCurr} = ${rate} ${baseCurr}`);
+  setText('resRateSummaryText', `기준: 1 ${resCurr} = ${Number(rate).toFixed(2)} ${baseCurr}`);
   setText('resConvertedPreviewText', `${converted.toLocaleString()} ${baseCurr}`);
 };
 
-window.fetchLatestReservationRate = function() {
+window.fetchLatestReservationRate = async function() {
   const trip = getActiveTrip();
   if (!trip) return;
   const baseCurr = (trip.privateBudget.currency || 'KRW').trim().toUpperCase();
   const resCurr = (getVal('inputResCurrency') || 'KRW').trim().toUpperCase();
-  const latestRate = getDefaultRateToBase(resCurr, baseCurr);
 
-  setVal('inputResAppliedRate', latestRate);
-  window.updateReservationRatePreview(false);
-  alert(`최신 기준 환율 (1 ${resCurr} = ${latestRate} ${baseCurr})을 불러왔습니다.`);
+  setText('resRateSummaryText', `최신 환율 조회 중...`);
+  const latestRate = await fetchLiveExchangeRate(resCurr, baseCurr);
+
+  setVal('inputResAppliedRate', latestRate.toFixed(2));
+  await window.updateReservationRatePreview(false);
+  alert(`최신 실시간 환율 (1 ${resCurr} = ${latestRate.toFixed(2)} ${baseCurr})을 불러왔습니다.`);
 };
 
-window.refreshSingleReservationRate = function(resId) {
+window.refreshSingleReservationRate = async function(resId) {
   const trip = getActiveTrip();
   if (!trip) return;
   const item = trip.shared.reservations.find(r => r.id === resId);
@@ -2551,15 +2665,16 @@ window.refreshSingleReservationRate = function(resId) {
   const resCurr = (item.currency || 'KRW').trim().toUpperCase();
   if (resCurr === baseCurr) return;
 
+  const latestLiveRate = await fetchLiveExchangeRate(resCurr, baseCurr);
   const avgExRate = getAverageExchangeRateForCurrency(trip, resCurr);
-  const suggestedRate = avgExRate || getDefaultRateToBase(resCurr, baseCurr);
+
   const inputStr = prompt(
-    `[${resCurr} ➔ ${baseCurr}] 적용할 새 환율을 입력하세요.\n(현재: ${item.appliedRate} / 최신기준: ${getDefaultRateToBase(resCurr, baseCurr)}${avgExRate ? ` / 내 환전평균: ${avgExRate}` : ''})`,
-    String(suggestedRate)
+    `[${resCurr} ➔ ${baseCurr}] 적용할 새 환율을 입력하세요.\n• 실시간 조회 환율: 1 ${resCurr} = ${latestLiveRate.toFixed(2)} ${baseCurr}\n• 현재 저장된 환율: ${Number(item.appliedRate).toFixed(2)} ${baseCurr}${avgExRate ? `\n• 내 환전 평균 환율: ${avgExRate.toFixed(2)} ${baseCurr}` : ''}`,
+    latestLiveRate.toFixed(2)
   );
 
   if (inputStr === null) return;
-  const newRate = Number(inputStr);
+  const newRate = Number(Number(inputStr).toFixed(2));
   if (!(newRate > 0)) {
     alert('유효한 환율 숫자를 입력해주세요.');
     return;
@@ -2708,7 +2823,7 @@ window.editReservation = function(resId) {
   setVal('inputResAmount', item.amount || '');
 
   if (Number(item.appliedRate) > 0) {
-    setVal('inputResAppliedRate', item.appliedRate);
+    setVal('inputResAppliedRate', Number(item.appliedRate).toFixed(2));
   }
   window.updateReservationRatePreview(false);
 
@@ -2757,7 +2872,7 @@ window.saveReservation = function(e) {
   let appliedRate = 1;
   if (currency !== baseCurr) {
     const inputRate = Number(getVal('inputResAppliedRate'));
-    appliedRate = inputRate > 0 ? inputRate : getDefaultRateToBase(currency, baseCurr);
+    appliedRate = inputRate > 0 ? Number(inputRate.toFixed(2)) : getFallbackRateToBase(currency, baseCurr);
   }
   const convertedAmount = Math.round(amount * appliedRate);
   const rateTimestamp = getNowTimestampStr();
@@ -2952,7 +3067,7 @@ window.renderReservations = function() {
 
     const resCurr = (res.currency || baseCurr).trim().toUpperCase();
     const isForeign = (res.amount > 0) && (resCurr !== baseCurr);
-    const appliedRate = Number(res.appliedRate) || getDefaultRateToBase(resCurr, baseCurr);
+    const appliedRate = Number(res.appliedRate) || getFallbackRateToBase(resCurr, baseCurr);
     const converted = Math.round((Number(res.amount) || 0) * appliedRate);
 
     const amountBadgeHtml = res.amount > 0
@@ -2960,7 +3075,7 @@ window.renderReservations = function() {
           <span class="font-bold text-slate-800">${Number(res.amount).toLocaleString()} ${escapeHtml(resCurr)}</span>
           ${isForeign ? `
             <div class="flex items-center justify-end gap-1 text-[10px] text-slate-500 mt-0.5">
-              <span>(적용 환율: ${appliedRate} / 환산: ${converted.toLocaleString()} ${baseCurr})</span>
+              <span>(1 ${escapeHtml(resCurr)} = ${appliedRate.toFixed(2)} ${baseCurr} / 환산: ${converted.toLocaleString()} ${baseCurr})</span>
               <button type="button" onclick="window.refreshSingleReservationRate('${res.id}')" class="text-sky-600 hover:text-sky-800 font-bold px-1 py-0.2 bg-sky-50 rounded" title="환율 갱신">
                 환율 갱신 🔄
               </button>
@@ -3037,7 +3152,7 @@ window.renderReservations = function() {
 };
 
 // ==========================================
-// 21. [전역 바인딩] 체크리스트 (준비물 / 쇼핑리스트)
+// 23. [전역 바인딩] 체크리스트 (준비물 / 쇼핑리스트)
 // ==========================================
 window.switchChecklistType = function(type) {
   currentChecklistType = type;
@@ -3081,1269 +3196,3 @@ window.addChecklistItem = function(e) {
   window.renderChecklist();
 };
 
-window.toggleChecklistItem = function(itemId) {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const list = trip.shared.checklists[currentChecklistType] || [];
-  const item = list.find(i => i.id === itemId);
-  if (item) {
-    item.checked = !item.checked;
-    saveAllTripsToStorage(trip);
-    window.renderChecklist();
-  }
-};
-
-window.deleteChecklistItem = function(itemId) {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const list = trip.shared.checklists[currentChecklistType] || [];
-  trip.shared.checklists[currentChecklistType] = list.filter(i => i.id !== itemId);
-  saveAllTripsToStorage(trip);
-  window.renderChecklist();
-};
-
-window.clearCompletedChecklist = function() {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const list = trip.shared.checklists[currentChecklistType] || [];
-  const completedCount = list.filter(i => i.checked).length;
-  if (completedCount === 0) {
-    alert('완료된 항목이 없습니다.');
-    return;
-  }
-  if (confirm(`완료된 ${completedCount}개 항목을 비우시겠습니까?`)) {
-    trip.shared.checklists[currentChecklistType] = list.filter(i => !i.checked);
-    saveAllTripsToStorage(trip);
-    window.renderChecklist();
-  }
-};
-
-window.renderChecklist = function() {
-  const trip = getActiveTrip();
-  const container = getEl('checklistContainer');
-  if (!trip || !container) return;
-  container.innerHTML = '';
-
-  const list = trip.shared.checklists[currentChecklistType] || [];
-  const completedCount = list.filter(i => i.checked).length;
-  setText('checklistSummaryText', `완료 ${completedCount} / 전체 ${list.length}`);
-
-  if (list.length === 0) {
-    container.innerHTML = `
-      <div class="py-10 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
-        <i class="fa-solid fa-check-double text-2xl mb-1.5 text-slate-300"></i>
-        <p class="text-xs">등록된 항목이 없습니다. 위 입력창에서 추가해보세요.</p>
-      </div>`;
-    return;
-  }
-
-  const sortedList = [...list].sort((a, b) => Number(a.checked) - Number(b.checked));
-
-  sortedList.forEach(item => {
-    const row = document.createElement('div');
-    row.className = `flex items-center justify-between p-3 rounded-xl border transition ${
-      item.checked ? 'bg-slate-50 border-slate-100 opacity-70' : 'bg-white border-slate-200/80 shadow-2xs'
-    }`;
-
-    row.innerHTML = `
-      <label class="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
-        <input type="checkbox" ${item.checked ? 'checked' : ''} onchange="window.toggleChecklistItem('${item.id}')" class="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500 shrink-0">
-        <span class="text-xs font-medium truncate ${item.checked ? 'line-through text-slate-400' : 'text-slate-800'}">
-          ${escapeHtml(item.title)}
-        </span>
-      </label>
-      <button type="button" onclick="window.deleteChecklistItem('${item.id}')" class="text-slate-300 hover:text-rose-500 p-1 shrink-0" title="삭제">
-        <i class="fa-solid fa-trash-can text-xs"></i>
-      </button>
-    `;
-    container.appendChild(row);
-  });
-};
-
-// ==========================================
-// 22. [전역 바인딩] 지출 및 통화별 정밀 정산 & 개별 환율 스냅샷/갱신
-// ==========================================
-function getTimingOrder(timing) {
-  if (timing === 'pre') return 1;
-  if (timing === 'during') return 2;
-  return 3;
-}
-
-function getCurrencyOrder(curr, baseCurr) {
-  const upper = (curr || '').toUpperCase();
-  if (upper === baseCurr.toUpperCase()) return 1;
-  if (upper === 'USD') return 2;
-  if (upper === 'EUR') return 3;
-  if (upper === 'JPY') return 4;
-  return 5;
-}
-
-window.handleExpenseTimingChange = function(timing) {
-  const wrapper = getEl('expenseDaySelectorWrapper');
-  if (wrapper) {
-    if (timing === 'during') {
-      wrapper.classList.remove('hidden');
-    } else {
-      wrapper.classList.add('hidden');
-    }
-  }
-};
-
-function getSelectedExpenseCurrency() {
-  let curr = getVal('inputExpenseCurrency');
-  if (curr === 'CUSTOM') {
-    curr = (getVal('inputCustomCurrencyCode').trim() || 'KRW').toUpperCase();
-  }
-  return (curr || 'KRW').trim().toUpperCase();
-}
-
-window.handleCurrencyChange = function(val) {
-  const customWrapper = getEl('customCurrencyWrapper');
-  if (customWrapper) {
-    if (val === 'CUSTOM') {
-      customWrapper.classList.remove('hidden');
-    } else {
-      customWrapper.classList.add('hidden');
-    }
-  }
-  window.updateExpenseRatePreview(true);
-};
-
-window.updateExpenseRatePreview = function(resetRateToDefault = false) {
-  const trip = getActiveTrip();
-  if (!trip) return;
-
-  const baseCurr = (trip.privateBudget.currency || 'KRW').trim().toUpperCase();
-  const expCurr = getSelectedExpenseCurrency();
-  const amount = Number(getVal('inputExpenseAmount')) || 0;
-  const rateBox = getEl('expenseExchangeRateBox');
-
-  if (expCurr === baseCurr) {
-    if (rateBox) rateBox.classList.add('hidden');
-    setVal('inputExpenseAppliedRate', '1');
-    return;
-  }
-
-  if (rateBox) rateBox.classList.remove('hidden');
-  setText('expenseRateUnitLabel', `1 ${expCurr} =`);
-  setText('expenseRateBaseUnitLabel', baseCurr);
-
-  let rate = Number(getVal('inputExpenseAppliedRate'));
-  if (resetRateToDefault || !(rate > 0)) {
-    const avgExRate = getAverageExchangeRateForCurrency(trip, expCurr);
-    rate = avgExRate || getDefaultRateToBase(expCurr, baseCurr);
-    setVal('inputExpenseAppliedRate', rate);
-  }
-
-  const converted = Math.round(amount * rate);
-  setText('expenseRateSummaryText', `기준: 1 ${expCurr} = ${rate} ${baseCurr}`);
-  setText('expenseConvertedPreviewText', `${converted.toLocaleString()} ${baseCurr}`);
-};
-
-window.fetchLatestExpenseRate = function() {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const baseCurr = (trip.privateBudget.currency || 'KRW').trim().toUpperCase();
-  const expCurr = getSelectedExpenseCurrency();
-  const latestRate = getDefaultRateToBase(expCurr, baseCurr);
-
-  setVal('inputExpenseAppliedRate', latestRate);
-  window.updateExpenseRatePreview(false);
-  alert(`최신 기준 환율 (1 ${expCurr} = ${latestRate} ${baseCurr})을 불러왔습니다.`);
-};
-
-window.refreshSingleExpenseRate = function(expId) {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const me = getMeName(trip);
-  const baseCurr = (trip.privateBudget.currency || 'KRW').trim().toUpperCase();
-
-  const exp = trip.shared.expenses.find(e => e.id === expId);
-  if (!exp) return;
-  ensureExpenseSchema(exp, me, baseCurr);
-
-  const expCurr = (exp.currency || baseCurr).trim().toUpperCase();
-  if (expCurr === baseCurr) return;
-
-  const avgExRate = getAverageExchangeRateForCurrency(trip, expCurr);
-  const suggestedRate = avgExRate || getDefaultRateToBase(expCurr, baseCurr);
-
-  const inputStr = prompt(
-    `[${expCurr} ➔ ${baseCurr}] 적용할 새 환율을 입력하세요.\n(현재: ${exp.appliedRate} / 최신기준: ${getDefaultRateToBase(expCurr, baseCurr)}${avgExRate ? ` / 내 환전평균: ${avgExRate}` : ''})`,
-    String(suggestedRate)
-  );
-
-  if (inputStr === null) return;
-  const newRate = Number(inputStr);
-  if (!(newRate > 0)) {
-    alert('유효한 환율 숫자를 입력해주세요.');
-    return;
-  }
-
-  const nowTs = getNowTimestampStr();
-  exp.appliedRate = newRate;
-  exp.rateTimestamp = nowTs;
-  exp.convertedAmount = Math.round((Number(exp.amount) || 0) * newRate);
-
-  if (exp.linkedReservationId) {
-    const linkedRes = trip.shared.reservations.find(r => r.id === exp.linkedReservationId);
-    if (linkedRes) {
-      linkedRes.appliedRate = newRate;
-      linkedRes.rateTimestamp = nowTs;
-      linkedRes.convertedAmount = Math.round((Number(linkedRes.amount) || 0) * newRate);
-    }
-  }
-
-  saveAllTripsToStorage(trip);
-  window.renderAll();
-};
-
-function populateExpenseMemberControls(selectedPayer = null, existingParticipants = null) {
-  const trip = getActiveTrip();
-  const me = getMeName(trip);
-  const members = trip?.shared?.members || [me];
-
-  const payerSelect = getEl('inputExpensePayer');
-  if (payerSelect) {
-    payerSelect.innerHTML = '';
-    members.forEach(m => {
-      const cleanM = String(m).trim();
-      const opt = document.createElement('option');
-      opt.value = cleanM;
-      opt.textContent = cleanM;
-      payerSelect.appendChild(opt);
-    });
-    if (selectedPayer) payerSelect.value = String(selectedPayer).trim();
-  }
-
-  const splitContainer = getEl('expenseParticipantsCheckboxes');
-  if (splitContainer) {
-    splitContainer.innerHTML = '';
-    members.forEach(m => {
-      const cleanM = String(m).trim();
-      const isChecked = Array.isArray(existingParticipants)
-        ? existingParticipants.includes(cleanM)
-        : true;
-
-      const label = document.createElement('label');
-      label.className = 'flex items-center gap-2 text-xs text-slate-700 cursor-pointer';
-      label.innerHTML = `
-        <input type="checkbox" value="${escapeHtml(cleanM)}" ${isChecked ? 'checked' : ''} class="expense-split-member-chk rounded border-slate-300 text-sky-600 focus:ring-sky-500">
-        <span>${escapeHtml(cleanM)}</span>
-      `;
-      splitContainer.appendChild(label);
-    });
-  }
-}
-
-window.openExpenseModal = function() {
-  const trip = getActiveTrip();
-  const me = getMeName(trip);
-  const baseCurr = trip?.privateBudget?.currency || 'KRW';
-
-  setText('modalExpenseTitle', '지출 내역 등록');
-  const form = getEl('formExpense');
-  if (form) form.reset();
-  setVal('inputExpenseId', '');
-  setVal('inputExpenseCurrency', baseCurr);
-  setVal('inputExpenseAppliedRate', '1');
-
-  const delBtn = getEl('btnDeleteExpense');
-  if (delBtn) delBtn.classList.add('hidden');
-  const customWrapper = getEl('customCurrencyWrapper');
-  if (customWrapper) customWrapper.classList.add('hidden');
-
-  window.handleExpenseTimingChange('pre');
-  populateExpenseMemberControls(me);
-  window.updateExpenseRatePreview(true);
-  window.openModal('modalExpense');
-};
-
-window.editExpense = function(expId) {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const me = getMeName(trip);
-  const baseCurr = trip.privateBudget.currency || 'KRW';
-  const exp = trip.shared.expenses.find(e => e.id === expId);
-  if (!exp) return;
-  ensureExpenseSchema(exp, me, baseCurr);
-
-  setText('modalExpenseTitle', '지출 내역 수정');
-  setVal('inputExpenseId', exp.id);
-  setVal('inputExpenseTitle', exp.title);
-  setVal('inputExpenseAmount', exp.amount);
-
-  document.querySelectorAll('input[name="expenseTiming"]').forEach(r => {
-    r.checked = r.value === exp.timing;
-  });
-  window.handleExpenseTimingChange(exp.timing);
-  if (exp.day) setVal('inputExpenseDay', exp.day);
-
-  const currSelect = getEl('inputExpenseCurrency');
-  const customWrapper = getEl('customCurrencyWrapper');
-
-  if (['KRW', 'JPY', 'USD', 'EUR'].includes(exp.currency)) {
-    if (currSelect) currSelect.value = exp.currency;
-    if (customWrapper) customWrapper.classList.add('hidden');
-  } else {
-    if (currSelect) currSelect.value = 'CUSTOM';
-    if (customWrapper) customWrapper.classList.remove('hidden');
-    setVal('inputCustomCurrencyCode', exp.currency);
-  }
-
-  if (Number(exp.appliedRate) > 0) {
-    setVal('inputExpenseAppliedRate', exp.appliedRate);
-  }
-  window.updateExpenseRatePreview(false);
-
-  populateExpenseMemberControls(exp.payer, exp.participants);
-  const delBtn = getEl('btnDeleteExpense');
-  if (delBtn) delBtn.classList.remove('hidden');
-
-  window.openModal('modalExpense');
-};
-
-window.saveExpense = function(e) {
-  e.preventDefault();
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const me = getMeName(trip);
-  const baseCurr = (trip.privateBudget.currency || 'KRW').trim().toUpperCase();
-
-  const id = getVal('inputExpenseId');
-  const timingRadio = document.querySelector('input[name="expenseTiming"]:checked');
-  const timing = timingRadio ? timingRadio.value : 'pre';
-  const day = Number(getVal('inputExpenseDay')) || 1;
-  const title = getVal('inputExpenseTitle').trim();
-  const amount = Number(getVal('inputExpenseAmount')) || 0;
-
-  const currency = getSelectedExpenseCurrency();
-
-  let appliedRate = 1;
-  if (currency !== baseCurr) {
-    const inputRate = Number(getVal('inputExpenseAppliedRate'));
-    appliedRate = inputRate > 0 ? inputRate : getDefaultRateToBase(currency, baseCurr);
-  }
-  const convertedAmount = Math.round(amount * appliedRate);
-  const rateTimestamp = getNowTimestampStr();
-
-  const payer = getVal('inputExpensePayer').trim();
-  const splitCheckboxes = document.querySelectorAll('.expense-split-member-chk:checked');
-  const selectedMembers = Array.from(splitCheckboxes).map(c => c.value.trim());
-
-  if (selectedMembers.length === 0) {
-    alert('정산 참여자를 최소 1명 이상 선택해주세요.');
-    return;
-  }
-
-  let prevSettledMap = {};
-  let linkedResId = null;
-  if (id) {
-    const exist = trip.shared.expenses.find(x => x.id === id);
-    if (exist) {
-      ensureExpenseSchema(exist, me, baseCurr);
-      prevSettledMap = { ...exist.settledMembers };
-      linkedResId = exist.linkedReservationId || null;
-    }
-  }
-
-  const settledMembers = {};
-  selectedMembers.forEach(m => {
-    if (prevSettledMap[m] === true) {
-      settledMembers[m] = true;
-    }
-  });
-
-  const updatedObj = ensureExpenseSchema({
-    id: id || 'ex_' + Date.now(),
-    timing,
-    day,
-    title,
-    currency,
-    amount,
-    appliedRate,
-    convertedAmount,
-    rateTimestamp,
-    payer,
-    participants: selectedMembers,
-    settledMembers,
-    ...(linkedResId ? { linkedReservationId: linkedResId } : {})
-  }, me, baseCurr);
-
-  if (id) {
-    const idx = trip.shared.expenses.findIndex(x => x.id === id);
-    if (idx !== -1) trip.shared.expenses[idx] = updatedObj;
-
-    if (linkedResId) {
-      const linkedRes = trip.shared.reservations.find(r => r.id === linkedResId);
-      if (linkedRes) {
-        linkedRes.currency = currency;
-        linkedRes.amount = amount;
-        linkedRes.appliedRate = appliedRate;
-        linkedRes.convertedAmount = convertedAmount;
-        linkedRes.rateTimestamp = rateTimestamp;
-      }
-    }
-  } else {
-    trip.shared.expenses.push(updatedObj);
-  }
-
-  saveAllTripsToStorage(trip);
-  window.closeModal('modalExpense');
-  window.renderAll();
-};
-
-window.deleteCurrentExpense = function() {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const id = getVal('inputExpenseId');
-  if (id && confirm('이 지출 내역을 삭제하시겠습니까?')) {
-    trip.shared.expenses = trip.shared.expenses.filter(e => e.id !== id);
-    saveAllTripsToStorage(trip);
-    window.closeModal('modalExpense');
-    window.renderAll();
-  }
-};
-
-window.toggleSettlement = function(expenseId, memberName) {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const me = getMeName(trip);
-  const baseCurr = trip.privateBudget.currency || 'KRW';
-
-  const exp = trip.shared.expenses.find(e => e.id === expenseId);
-  if (!exp) return;
-  ensureExpenseSchema(exp, me, baseCurr);
-
-  const targetName = String(memberName || '').trim();
-  const nextVal = !exp.settledMembers[targetName];
-
-  if (nextVal) {
-    exp.settledMembers[targetName] = true;
-  } else {
-    delete exp.settledMembers[targetName];
-  }
-
-  saveAllTripsToStorage(trip);
-  window.renderAll();
-};
-
-window.toggleSplitCheck = window.toggleSettlement;
-
-window.renderExpensesAndSettlement = function() {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const me = getMeName(trip);
-  const baseCurr = (trip.privateBudget.currency || trip.shared.baseCurrency || 'KRW').trim().toUpperCase();
-
-  trip.shared.expenses.forEach(e => ensureExpenseSchema(e, me, baseCurr));
-
-  // 상단 [최종 송금 정산 요약] 카드 렌더링
-  window.renderSettlementSummary();
-
-  const sortedExpenses = [...trip.shared.expenses].sort((a, b) => {
-    const timingA = getTimingOrder(a.timing);
-    const timingB = getTimingOrder(b.timing);
-    if (timingA !== timingB) return timingA - timingB;
-
-    if (a.timing === 'during' && b.timing === 'during') {
-      const dayA = Number(a.day) || 1;
-      const dayB = Number(b.day) || 1;
-      if (dayA !== dayB) return dayA - dayB;
-    }
-
-    const currA = getCurrencyOrder(a.currency, baseCurr);
-    const currB = getCurrencyOrder(b.currency, baseCurr);
-    return currA - currB;
-  });
-
-  const currencyBuckets = {};
-  sortedExpenses.forEach(exp => {
-    const c = (exp.currency || 'KRW').toUpperCase();
-    if (!currencyBuckets[c]) {
-      currencyBuckets[c] = { total: 0, settled: 0, unsettled: 0 };
-    }
-    const amt = Number(exp.amount) || 0;
-    currencyBuckets[c].total += amt;
-
-    const participants = exp.participants;
-    const splitCount = participants.length > 0 ? participants.length : 1;
-    const perSplit = amt / splitCount;
-    const payerClean = String(exp.payer || '').trim();
-    const settledMap = exp.settledMembers || {};
-
-    participants.forEach(m => {
-      const isSettled = (m === payerClean) || (settledMap[m] === true);
-      if (isSettled) {
-        currencyBuckets[c].settled += perSplit;
-      } else {
-        currencyBuckets[c].unsettled += perSplit;
-      }
-    });
-  });
-
-  const dashContainer = getEl('currencyDashboardContainer');
-  if (dashContainer) {
-    dashContainer.innerHTML = '';
-    const activeCurrencies = Object.keys(currencyBuckets);
-    if (activeCurrencies.length === 0) {
-      dashContainer.innerHTML = `
-        <div class="py-6 text-center text-xs text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
-          등록된 지출 내역이 없습니다.
-        </div>`;
-    } else {
-      activeCurrencies.forEach(curr => {
-        const b = currencyBuckets[curr];
-        const card = document.createElement('div');
-        card.className = 'bg-white border border-slate-200 rounded-2xl p-3.5 shadow-xs space-y-2';
-        card.innerHTML = `
-          <div class="flex items-center justify-between border-b border-slate-100 pb-1.5">
-            <span class="text-xs font-bold text-slate-800">${curr}</span>
-            <span class="text-[11px] text-slate-400">총 정산 대상: <strong class="text-slate-700">${Math.round(b.total).toLocaleString()} ${curr}</strong></span>
-          </div>
-          <div class="grid grid-cols-2 gap-2 text-xs">
-            <div class="bg-emerald-50/70 border border-emerald-100 p-2 rounded-xl">
-              <span class="text-[10px] text-emerald-700 font-semibold block">정산 완료 항목</span>
-              <span class="text-xs font-bold text-emerald-800">${Math.round(b.settled).toLocaleString()} ${curr}</span>
-            </div>
-            <div class="bg-rose-50/70 border border-rose-100 p-2 rounded-xl">
-              <span class="text-[10px] text-rose-700 font-semibold block">정산 필요 항목</span>
-              <span class="text-xs font-bold text-rose-800">${Math.round(b.unsettled).toLocaleString()} ${curr}</span>
-            </div>
-          </div>
-        `;
-        dashContainer.appendChild(card);
-      });
-    }
-  }
-
-  window.renderSettlementDetails();
-
-  const listContainer = getEl('expenseListContainer');
-  if (!listContainer) return;
-  listContainer.innerHTML = '';
-
-  sortedExpenses.forEach(exp => {
-    const card = document.createElement('div');
-    card.className = 'bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5';
-
-    let timingBadge = '';
-    if (exp.timing === 'pre') timingBadge = '<span class="text-[10px] bg-indigo-100 text-indigo-700 font-bold px-1.5 py-0.5 rounded">사전 준비</span>';
-    else if (exp.timing === 'during') timingBadge = `<span class="text-[10px] bg-sky-100 text-sky-700 font-bold px-1.5 py-0.5 rounded">Day ${exp.day}</span>`;
-    else timingBadge = '<span class="text-[10px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded">사후 정산</span>';
-
-    const participants = exp.participants;
-    const splitCount = participants.length > 0 ? participants.length : 1;
-    const perAmount = (Number(exp.amount) || 0) / splitCount;
-    const isPersonal = participants.length === 1;
-    const payerClean = String(exp.payer || '').trim();
-    const settledMap = exp.settledMembers || {};
-
-    const expCurr = (exp.currency || baseCurr).trim().toUpperCase();
-    const isForeign = expCurr !== baseCurr;
-    const appliedRate = Number(exp.appliedRate) || getDefaultRateToBase(expCurr, baseCurr);
-    const converted = Math.round((Number(exp.amount) || 0) * appliedRate);
-
-    let splitsHtml = '<div class="flex flex-wrap gap-1.5 pt-1">';
-    participants.forEach(memberName => {
-      if (memberName === payerClean) {
-        splitsHtml += `
-          <span class="inline-flex items-center gap-1 text-[11px] bg-sky-50 border border-sky-200 px-2 py-1 rounded-lg">
-            <span class="font-bold text-sky-800">${escapeHtml(memberName)}</span>
-            <span class="text-[10px] text-sky-600 font-semibold">결제자</span>
-          </span>
-        `;
-      } else {
-        const isSettled = (settledMap[memberName] === true);
-        const statusBadge = isSettled
-          ? '<span class="text-[10px] text-emerald-600 font-semibold">정산 완료</span>'
-          : '<span class="text-[10px] text-slate-400 font-semibold">정산 필요</span>';
-
-        splitsHtml += `
-          <label class="inline-flex items-center gap-1 text-[11px] bg-slate-50 border border-slate-200 px-2 py-1 rounded-lg cursor-pointer">
-            <input type="checkbox" onchange="window.toggleSettlement('${exp.id}', '${escapeParam(memberName)}')" ${isSettled ? 'checked' : ''} class="rounded border-slate-300 text-sky-600 focus:ring-sky-500">
-            <span class="font-medium text-slate-700">${escapeHtml(memberName)}</span>
-            ${statusBadge}
-          </label>
-        `;
-      }
-    });
-    splitsHtml += '</div>';
-
-    card.innerHTML = `
-      <div class="flex items-start justify-between gap-2">
-        <div class="space-y-0.5 min-w-0 flex-1">
-          <div class="flex items-center gap-1.5 flex-wrap">
-            ${timingBadge}
-            ${isPersonal ? '<span class="text-[10px] bg-emerald-100 text-emerald-700 font-bold px-1.5 py-0.5 rounded">개인 지출</span>' : ''}
-            ${exp.linkedReservationId ? '<span class="text-[9px] bg-slate-100 text-slate-500 px-1 py-0.5 rounded">예약연동</span>' : ''}
-            <span class="text-xs font-bold text-slate-800">${escapeHtml(exp.title)}</span>
-          </div>
-          <p class="text-[11px] text-slate-400">결제: <strong class="text-slate-600">${escapeHtml(exp.payer)}</strong> (1인당: ${Math.round(perAmount).toLocaleString()} ${expCurr})</p>
-          ${isForeign ? `
-            <div class="flex items-center gap-1.5 text-[10px] text-slate-500 pt-0.5">
-              <span>(적용 환율: ${appliedRate} / 환산: ${converted.toLocaleString()} ${baseCurr})</span>
-              <button type="button" onclick="window.refreshSingleExpenseRate('${exp.id}')" class="text-sky-600 hover:text-sky-800 font-bold px-1.5 py-0.2 bg-sky-50 rounded" title="환율 갱신">
-                환율 갱신 🔄
-              </button>
-            </div>` : ''}
-        </div>
-        <div class="flex items-center gap-1 shrink-0">
-          <span class="text-xs font-bold text-slate-800">${Number(exp.amount).toLocaleString()} ${expCurr}</span>
-          <button type="button" onclick="window.editExpense('${exp.id}')" class="text-xs text-slate-400 hover:text-slate-600 p-1">
-            <i class="fa-solid fa-pen"></i>
-          </button>
-        </div>
-      </div>
-      ${splitsHtml}
-    `;
-    listContainer.appendChild(card);
-  });
-};
-
-window.renderSettlementDetails = function() {
-  const trip = getActiveTrip();
-  const container = getEl('settlementDetailContainer');
-  if (!trip || !container) return;
-  const me = getMeName(trip);
-  const baseCurr = trip.privateBudget.currency || 'KRW';
-  container.innerHTML = '';
-
-  const debts = [];
-
-  trip.shared.expenses.forEach(rawExp => {
-    const exp = ensureExpenseSchema(rawExp, me, baseCurr);
-    const participants = exp.participants;
-    const splitCount = participants.length > 0 ? participants.length : 1;
-    const perAmount = (Number(exp.amount) || 0) / splitCount;
-    const payerClean = String(exp.payer || '').trim();
-    const settledMap = exp.settledMembers || {};
-
-    participants.forEach(memberClean => {
-      if (memberClean !== payerClean && settledMap[memberClean] !== true) {
-        debts.push({
-          from: memberClean,
-          to: payerClean,
-          amount: perAmount,
-          currency: exp.currency
-        });
-      }
-    });
-  });
-
-  const summary = {};
-  debts.forEach(d => {
-    const key = `${d.from}->${d.to}|${d.currency}`;
-    if (!summary[key]) summary[key] = { from: d.from, to: d.to, currency: d.currency, total: 0 };
-    summary[key].total += d.amount;
-  });
-
-  const keys = Object.keys(summary);
-  if (keys.length === 0) {
-    container.innerHTML = '<p class="text-[11px] text-emerald-600 py-1">모든 송금 및 정산이 완료되었습니다.</p>';
-    return;
-  }
-
-  keys.forEach(k => {
-    const item = summary[k];
-    const row = document.createElement('div');
-    row.className = 'flex items-center justify-between py-1 border-b border-slate-50 last:border-0';
-    row.innerHTML = `
-      <span class="text-[11px] text-slate-700"><strong>${escapeHtml(item.from)}</strong> ➔ <strong>${escapeHtml(item.to)}</strong></span>
-      <span class="text-xs font-bold text-rose-600">${Math.round(item.total).toLocaleString()} ${escapeHtml(item.currency)}</span>
-    `;
-    container.appendChild(row);
-  });
-};
-
-window.refreshSettlementView = function() {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  window.renderExpensesAndSettlement();
-  window.renderBudget(trip);
-};
-
-// ==========================================
-// 23. [전역 바인딩] 사진 기록 & 카테고리 필터 (350px 압축 + 1MB 방어)
-// ==========================================
-function compressImage(file, callback) {
-  const reader = new FileReader();
-  reader.onload = e => {
-    const img = new Image();
-    img.onload = () => {
-      const maxDimension = 350;
-      let width = img.width;
-      let height = img.height;
-
-      if (width > height) {
-        if (width > maxDimension) {
-          height = Math.round((height * maxDimension) / width);
-          width = maxDimension;
-        }
-      } else {
-        if (height > maxDimension) {
-          width = Math.round((width * maxDimension) / height);
-          height = maxDimension;
-        }
-      }
-
-      const canvas = document.createElement('canvas');
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, width, height);
-      const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-      callback(compressedDataUrl);
-    };
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
-}
-
-window.openPhotoUploadModal = function() {
-  const form = getEl('formPhotoUpload');
-  if (form) form.reset();
-  const selector = getEl('timelineDaySelector');
-  setVal('inputPhotoUploadDay', selector ? selector.value : 1);
-  setVal('inputPhotoUploadCategory', '관광지');
-  setVal('inputPhotoUploadMemo', '');
-  window.openModal('modalPhotoUpload');
-};
-
-window.submitPhotoUploadModal = function(e) {
-  e.preventDefault();
-  const trip = getActiveTrip();
-  if (!trip) return;
-
-  const fileInput = getEl('photoFileInput');
-  const files = fileInput ? fileInput.files : null;
-  if (!files || files.length === 0) {
-    alert('업로드할 사진 파일을 선택해주세요.');
-    return;
-  }
-
-  const day = Number(getVal('inputPhotoUploadDay')) || 1;
-  const category = getVal('inputPhotoUploadCategory') || '기타';
-  const memo = getVal('inputPhotoUploadMemo').trim();
-
-  let remaining = files.length;
-
-  Array.from(files).forEach(file => {
-    compressImage(file, dataUrl => {
-      trip.shared.photos.unshift({
-        id: 'ph_' + Date.now() + Math.random().toString(36).substr(2, 4),
-        day,
-        category,
-        dataUrl,
-        caption: memo,
-        timestamp: new Date().toISOString()
-      });
-      remaining--;
-      if (remaining === 0) {
-        saveAllTripsToStorage(trip);
-        window.closeModal('modalPhotoUpload');
-        window.renderAll();
-      }
-    });
-  });
-};
-
-window.filterPhotosByCategory = function(category) {
-  currentPhotoFilter = category;
-  document.querySelectorAll('.photo-filter-btn').forEach(btn => {
-    const targetCat = btn.getAttribute('data-photo-filter');
-    if (targetCat === category) {
-      btn.className = 'photo-filter-btn shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 text-white';
-    } else {
-      btn.className = 'photo-filter-btn shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-white border border-slate-200 text-slate-600';
-    }
-  });
-  window.renderPhotos();
-};
-
-window.openLightbox = function(photoId) {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const photo = trip.shared.photos.find(p => p.id === photoId);
-  if (!photo) return;
-
-  currentLightboxPhotoId = photo.id;
-  const imgEl = getEl('lightboxImg');
-  const dateEl = getEl('lightboxDateText');
-  const catBadge = getEl('lightboxCategoryBadge');
-
-  const cat = photo.category || '기타';
-  if (imgEl) imgEl.src = photo.dataUrl;
-  if (catBadge) catBadge.textContent = cat;
-  if (dateEl) dateEl.textContent = `Day ${photo.day} · ${photo.timestamp ? photo.timestamp.split('T')[0] : ''}`;
-
-  setVal('inputPhotoCategory', cat);
-  setVal('inputPhotoCaption', photo.caption || '');
-
-  window.openModal('modalLightbox');
-};
-
-window.saveCurrentPhotoCaption = function() {
-  const trip = getActiveTrip();
-  if (!trip || !currentLightboxPhotoId) return;
-  const photo = trip.shared.photos.find(p => p.id === currentLightboxPhotoId);
-  if (photo) {
-    photo.category = getVal('inputPhotoCategory') || '기타';
-    photo.caption = getVal('inputPhotoCaption').trim();
-    saveAllTripsToStorage(trip);
-    window.closeModal('modalLightbox');
-    window.renderAll();
-  }
-};
-
-window.deleteCurrentPhoto = function() {
-  const trip = getActiveTrip();
-  if (!trip || !currentLightboxPhotoId) return;
-  if (confirm('이 사진을 삭제하시겠습니까?')) {
-    trip.shared.photos = trip.shared.photos.filter(p => p.id !== currentLightboxPhotoId);
-    trip.shared.reviews.forEach(rv => {
-      if (Array.isArray(rv.photoIds)) {
-        rv.photoIds = rv.photoIds.filter(pid => pid !== currentLightboxPhotoId);
-      }
-    });
-    saveAllTripsToStorage(trip);
-    window.closeModal('modalLightbox');
-    window.renderAll();
-  }
-};
-
-window.renderPhotos = function() {
-  const trip = getActiveTrip();
-  const container = getEl('photoGridContainer');
-  if (!trip || !container) return;
-  container.innerHTML = '';
-
-  const filteredPhotos = currentPhotoFilter === '전체'
-    ? trip.shared.photos
-    : trip.shared.photos.filter(p => (p.category || '기타') === currentPhotoFilter);
-
-  if (filteredPhotos.length === 0) {
-    container.className = 'py-12 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200';
-    container.innerHTML = `
-      <i class="fa-solid fa-camera text-3xl mb-2 text-slate-300"></i>
-      <p class="text-xs">해당 카테고리에 등록된 여행 사진이 없습니다.</p>`;
-    return;
-  }
-
-  container.className = 'grid grid-cols-3 gap-2';
-
-  filteredPhotos.forEach(photo => {
-    const cat = photo.category || '기타';
-    const item = document.createElement('div');
-    item.className = 'relative aspect-square rounded-xl overflow-hidden bg-slate-100 cursor-pointer group shadow-2xs';
-    item.onclick = function() { window.openLightbox(photo.id); };
-    item.innerHTML = `
-      <img src="${photo.dataUrl}" alt="사진" class="w-full h-full object-cover pointer-events-none">
-      <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1.5 pointer-events-none">
-        <p class="text-[10px] text-white truncate">${escapeHtml(photo.caption || '메모 없음')}</p>
-      </div>
-      <div class="absolute top-1 left-1 flex gap-1 pointer-events-none">
-        <span class="bg-black/60 text-white text-[9px] font-semibold px-1 rounded">Day ${photo.day}</span>
-        <span class="bg-sky-600/80 text-white text-[9px] font-semibold px-1 rounded">${escapeHtml(cat)}</span>
-      </div>
-    `;
-    container.appendChild(item);
-  });
-};
-
-// ==========================================
-// 24. [전역 바인딩] 장소 리뷰 & '예약된 항목에서 불러오기' 연동
-// ==========================================
-function populateReviewReservationDropdown() {
-  const trip = getActiveTrip();
-  const selectEl = getEl('selectReviewFromReservation');
-  if (!trip || !selectEl) return;
-
-  selectEl.innerHTML = '<option value="">직접 입력 (또는 예약 내역 선택)</option>';
-
-  const reservations = trip.shared.reservations || [];
-  reservations.forEach(res => {
-    const labelName = res.category === '항공'
-      ? `${res.airline || '항공'} ${res.flightNo || ''} (${res.arrAirport || ''})`
-      : (res.placeName || res.title || '예약 항목');
-    const dtText = res.resDate || res.depDate || '';
-
-    const opt = document.createElement('option');
-    opt.value = res.id;
-    opt.textContent = `[${res.category}] ${labelName}${dtText ? ` (${dtText})` : ''}`;
-    selectEl.appendChild(opt);
-  });
-}
-
-window.applyReservationToReview = function(resId) {
-  if (!resId) return;
-  const trip = getActiveTrip();
-  if (!trip) return;
-
-  const res = trip.shared.reservations.find(r => r.id === resId);
-  if (!res) return;
-
-  let mappedCat = '관광지';
-  if (res.category === '숙소') mappedCat = '숙소';
-  else if (res.category === '식당') mappedCat = '식당';
-  else mappedCat = '관광지';
-
-  const placeName = res.category === '항공'
-    ? `${res.airline || ''} ${res.flightNo || ''} (${res.arrAirport || ''})`.trim()
-    : (res.placeName || res.title || '');
-
-  const rawDate = res.resDate || res.depDate || '';
-  let formattedDate = rawDate;
-  if (rawDate) {
-    const analyzed = analyzeDateAndTimeAgainstTrip(rawDate, '12:00');
-    formattedDate = `Day ${analyzed.day} (${rawDate})`;
-  }
-
-  setVal('inputReviewCategory', mappedCat);
-  setVal('inputReviewPlace', placeName);
-  if (formattedDate) setVal('inputReviewDate', formattedDate);
-  if (res.memo && !getVal('inputReviewContent').trim()) {
-    setVal('inputReviewContent', res.memo);
-  }
-
-  window.renderReviewPhotoPicker(mappedCat);
-};
-
-window.filterReviewsByCategory = function(category) {
-  currentReviewFilter = category;
-  document.querySelectorAll('.review-filter-btn').forEach(btn => {
-    const targetCat = btn.getAttribute('data-review-filter');
-    if (targetCat === category) {
-      btn.className = 'review-filter-btn shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-slate-800 text-white';
-    } else {
-      btn.className = 'review-filter-btn shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-white border border-slate-200 text-slate-600';
-    }
-  });
-  window.renderReviews();
-};
-
-window.renderReviewPhotoPicker = function(category) {
-  const trip = getActiveTrip();
-  const grid = getEl('reviewPhotoPickerGrid');
-  if (!trip || !grid) return;
-  grid.innerHTML = '';
-
-  const matchingPhotos = trip.shared.photos.filter(p => (p.category || '기타') === category);
-  setText('reviewSelectedPhotoCount', `${selectedReviewPhotoIds.length}장 선택됨`);
-
-  if (matchingPhotos.length === 0) {
-    grid.className = 'text-center py-3 text-[11px] text-slate-400';
-    grid.innerHTML = `[${escapeHtml(category)}] 카테고리로 등록된 사진이 없습니다.`;
-    return;
-  }
-
-  grid.className = 'grid grid-cols-4 gap-1.5 max-h-36 overflow-y-auto no-scrollbar';
-
-  matchingPhotos.forEach(photo => {
-    const isSelected = selectedReviewPhotoIds.includes(photo.id);
-    const thumb = document.createElement('div');
-    thumb.className = `relative aspect-square rounded-lg overflow-hidden cursor-pointer border-2 transition ${
-      isSelected ? 'border-sky-500 ring-2 ring-sky-200' : 'border-transparent opacity-75 hover:opacity-100'
-    }`;
-    thumb.onclick = function() {
-      window.toggleReviewPhotoSelection(photo.id, category);
-    };
-
-    thumb.innerHTML = `
-      <img src="${photo.dataUrl}" class="w-full h-full object-cover pointer-events-none">
-      ${isSelected ? `
-        <div class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-sky-600 text-white flex items-center justify-center text-[9px]">
-          <i class="fa-solid fa-check"></i>
-        </div>` : ''}
-    `;
-    grid.appendChild(thumb);
-  });
-};
-
-window.toggleReviewPhotoSelection = function(photoId, category) {
-  if (selectedReviewPhotoIds.includes(photoId)) {
-    selectedReviewPhotoIds = selectedReviewPhotoIds.filter(id => id !== photoId);
-  } else {
-    selectedReviewPhotoIds.push(photoId);
-  }
-  window.renderReviewPhotoPicker(category);
-};
-
-window.openReviewModal = function() {
-  setText('modalReviewTitle', '장소 리뷰 & 방문 기록');
-  const form = getEl('formReview');
-  if (form) form.reset();
-  setVal('inputReviewId', '');
-  setVal('inputReviewCategory', '숙소');
-  setVal('inputReviewRating', '5');
-  selectedReviewPhotoIds = [];
-
-  populateReviewReservationDropdown();
-
-  const delBtn = getEl('btnDeleteReview');
-  if (delBtn) delBtn.classList.add('hidden');
-
-  window.renderReviewPhotoPicker('숙소');
-  window.openModal('modalReview');
-};
-
-window.editReview = function(reviewId) {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const rv = trip.shared.reviews.find(r => r.id === reviewId);
-  if (!rv) return;
-
-  setText('modalReviewTitle', '리뷰 기록 수정');
-  setVal('inputReviewId', rv.id);
-  const cat = rv.category || '숙소';
-  setVal('inputReviewCategory', cat);
-  setVal('inputReviewDate', rv.date || '');
-  setVal('inputReviewPlace', rv.place || '');
-  setVal('inputReviewRating', String(rv.rating || 5));
-  setVal('inputReviewContent', rv.content || '');
-  selectedReviewPhotoIds = Array.isArray(rv.photoIds) ? [...rv.photoIds] : [];
-
-  populateReviewReservationDropdown();
-
-  const delBtn = getEl('btnDeleteReview');
-  if (delBtn) delBtn.classList.remove('hidden');
-
-  window.renderReviewPhotoPicker(cat);
-  window.openModal('modalReview');
-};
-
-window.saveReview = function(e) {
-  e.preventDefault();
-  const trip = getActiveTrip();
-  if (!trip) return;
-
-  const id = getVal('inputReviewId');
-  const category = getVal('inputReviewCategory') || '숙소';
-  const date = getVal('inputReviewDate').trim();
-  const place = getVal('inputReviewPlace').trim();
-  const rating = Number(getVal('inputReviewRating')) || 5;
-  const content = getVal('inputReviewContent').trim();
-
-  if (!place || !content) return;
-
-  const reviewObj = {
-    id: id || 'rv_' + Date.now(),
-    category,
-    date,
-    place,
-    rating,
-    content,
-    photoIds: [...selectedReviewPhotoIds]
-  };
-
-  if (id) {
-    const idx = trip.shared.reviews.findIndex(r => r.id === id);
-    if (idx !== -1) trip.shared.reviews[idx] = reviewObj;
-  } else {
-    trip.shared.reviews.unshift(reviewObj);
-  }
-
-  saveAllTripsToStorage(trip);
-  window.closeModal('modalReview');
-  window.renderReviews();
-};
-
-window.deleteCurrentReview = function() {
-  const trip = getActiveTrip();
-  if (!trip) return;
-  const id = getVal('inputReviewId');
-  if (id && confirm('이 리뷰 기록을 삭제하시겠습니까?')) {
-    trip.shared.reviews = trip.shared.reviews.filter(r => r.id !== id);
-    saveAllTripsToStorage(trip);
-    window.closeModal('modalReview');
-    window.renderReviews();
-  }
-};
-
-window.renderReviews = function() {
-  const trip = getActiveTrip();
-  const container = getEl('reviewListContainer');
-  if (!trip || !container) return;
-  container.innerHTML = '';
-
-  const filteredReviews = currentReviewFilter === '전체'
-    ? trip.shared.reviews
-    : trip.shared.reviews.filter(r => r.category === currentReviewFilter);
-
-  if (filteredReviews.length === 0) {
-    container.innerHTML = `
-      <div class="py-12 text-center text-slate-400 bg-white rounded-2xl border border-dashed border-slate-200">
-        <i class="fa-solid fa-book-open text-3xl mb-2 text-slate-300"></i>
-        <p class="text-xs">등록된 리뷰 아카이브가 없습니다. 방문 기록을 남겨보세요.</p>
-      </div>`;
-    return;
-  }
-
-  const categoryBadgeColors = {
-    '숙소': 'bg-indigo-100 text-indigo-700',
-    '식당': 'bg-rose-100 text-rose-700',
-    '관광지': 'bg-emerald-100 text-emerald-700'
-  };
-
-  filteredReviews.forEach(rv => {
-    const badgeClass = categoryBadgeColors[rv.category] || 'bg-slate-100 text-slate-700';
-    const stars = '★'.repeat(rv.rating || 5) + '☆'.repeat(5 - (rv.rating || 5));
-
-    let displayPhotos = [];
-    if (Array.isArray(rv.photoIds) && rv.photoIds.length > 0) {
-      displayPhotos = rv.photoIds
-        .map(pid => trip.shared.photos.find(p => p.id === pid))
-        .filter(Boolean);
-    } else {
-      displayPhotos = trip.shared.photos
-        .filter(p => (p.category || '기타') === rv.category)
-        .slice(0, 3);
-    }
-
-    let photosHtml = '';
-    if (displayPhotos.length > 0) {
-      photosHtml = `
-        <div class="pt-2 border-t border-slate-100">
-          <div class="grid grid-cols-3 gap-1.5">
-            ${displayPhotos.map(p => `
-              <img src="${p.dataUrl}" onclick="window.openLightbox('${p.id}')" class="aspect-square object-cover rounded-lg cursor-pointer border border-slate-100">
-            `).join('')}
-          </div>
-        </div>
-      `;
-    }
-
-    const card = document.createElement('div');
-    card.className = 'bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5';
-    card.innerHTML = `
-      <div class="flex items-start justify-between">
-        <div class="space-y-1">
-          <div class="flex items-center gap-1.5">
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded ${badgeClass}">${escapeHtml(rv.category)}</span>
-            ${rv.date ? `<span class="text-[11px] text-slate-400 font-medium">${escapeHtml(rv.date)}</span>` : ''}
-          </div>
-          <h4 class="text-sm font-bold text-slate-800">${escapeHtml(rv.place)}</h4>
-          <div class="text-xs text-amber-500 tracking-tight">${stars}</div>
-        </div>
-        <button type="button" onclick="window.editReview('${rv.id}')" class="text-xs text-slate-400 hover:text-slate-600 p-1" title="수정">
-          <i class="fa-solid fa-pen"></i>
-        </button>
-      </div>
-      <p class="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl leading-relaxed whitespace-pre-line break-words">${escapeHtml(rv.content)}</p>
-      ${photosHtml}
-    `;
-    container.appendChild(card);
-  });
-};
-
-// ==========================================
-// 25. [전역 바인딩] 날짜별 종합 피드
-// ==========================================
-window.renderDatesView = function() {
-  const trip = getActiveTrip();
-  if (!trip) return;
-
-  const totalDays = calculateTotalDays();
-  const tabBar = getEl('datesDayTabBar');
-  if (tabBar) {
-    tabBar.innerHTML = '';
-    for (let i = 1; i <= totalDays; i++) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = (i === currentDatesDay)
-        ? 'shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold bg-sky-600 text-white shadow-xs'
-        : 'shrink-0 px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white border border-slate-200 text-slate-600';
-      btn.textContent = `Day ${i}`;
-      btn.onclick = function() {
-        currentDatesDay = i;
-        window.renderDatesView();
-      };
-      tabBar.appendChild(btn);
-    }
-  }
-
-  setText('dateSummaryDayTitle', `Day ${currentDatesDay} 종합 피드`);
-  setText('dateSummaryDateText', getDateStringForDay(currentDatesDay));
-
-  const tlContainer = getEl('dayFeedTimelineContainer');
-  if (tlContainer) {
-    tlContainer.innerHTML = '';
-    const daySchedules = trip.shared.schedules
-      .filter(s => Number(s.day) === currentDatesDay)
-      .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-
-    if (daySchedules.length === 0) {
-      tlContainer.innerHTML = '<p class="text-xs text-slate-400 py-3 text-center bg-white rounded-xl border border-dashed border-slate-200">등록된 동선이 없습니다.</p>';
-    } else {
-      daySchedules.forEach(s => {
-        const isFlight = s.type === 'flight';
-        const item = document.createElement('div');
-        item.className = 'bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between';
-        item.innerHTML = `
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-2">
-              <span class="text-xs font-bold ${isFlight ? 'text-indigo-600' : 'text-sky-600'}">${escapeHtml(s.time)}</span>
-              <span class="text-xs font-bold text-slate-800 truncate">${escapeHtml(s.place)}</span>
-            </div>
-            ${s.memo ? `<p class="text-[11px] text-slate-500 mt-0.5 truncate">${escapeHtml(s.memo)}</p>` : ''}
-          </div>
-          <button type="button" onclick="window.openSinglePlaceMap('${escapeParam(isFlight && s.arrAirport ? s.arrAirport : s.place)}')" class="text-xs text-slate-400 hover:text-sky-600 p-1">지도 🗺️</button>
-        `;
-        tlContainer.appendChild(item);
-      });
-    }
-  }
-
-  const phContainer = getEl('dayFeedPhotoContainer');
-  if (phContainer) {
-    phContainer.innerHTML = '';
-    const dayPhotos = trip.shared.photos.filter(p => Number(p.day) === currentDatesDay);
-
-    if (dayPhotos.length === 0) {
-      phContainer.className = 'py-4 text-center text-xs text-slate-400 bg-white rounded-xl border border-dashed border-slate-200';
-      phContainer.innerHTML = '당일 등록된 사진이 없습니다.';
-    } else {
-      phContainer.className = 'grid grid-cols-3 gap-2';
-      dayPhotos.forEach(p => {
-        const img = document.createElement('img');
-        img.src = p.dataUrl;
-        img.className = 'aspect-square object-cover rounded-xl cursor-pointer shadow-2xs';
-        img.onclick = function() { window.openLightbox(p.id); };
-        phContainer.appendChild(img);
-      });
-    }
-  }
-
-  const exContainer = getEl('dayFeedExpenseContainer');
-  if (exContainer) {
-    exContainer.innerHTML = '';
-    const dayExpenses = trip.shared.expenses.filter(e => e.timing === 'during' && Number(e.day) === currentDatesDay);
-
-    if (dayExpenses.length === 0) {
-      exContainer.innerHTML = '<p class="text-xs text-slate-400 py-3 text-center bg-white rounded-xl border border-dashed border-slate-200">당일 발생한 지출이 없습니다.</p>';
-    } else {
-      dayExpenses.forEach(e => {
-        const row = document.createElement('div');
-        row.className = 'bg-white p-3 rounded-xl border border-slate-200 flex justify-between items-center text-xs';
-        row.innerHTML = `
-          <div>
-            <span class="font-bold text-slate-800">${escapeHtml(e.title)}</span>
-            <span class="text-[10px] text-slate-400 block">결제: ${escapeHtml(e.payer)}</span>
-          </div>
-          <span class="font-bold text-slate-700">${Number(e.amount).toLocaleString()} ${escapeHtml(e.currency)}</span>
-        `;
-        exContainer.appendChild(row);
-      });
-    }
-  }
-};
-
-// ==========================================
-// 26. 앱 초기화 실행 (로컬 로드 -> Firebase 하이브리드 연결 -> 홈 화면 렌더)
-// ==========================================
-loadLocalTripsFromStorage();
-const cloudReady = initFirebaseHybrid();
-window.renderHomeView();
-if (cloudReady) {
-  startFirestoreRealtimeSubscription();
-}

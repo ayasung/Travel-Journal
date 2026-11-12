@@ -1,24 +1,25 @@
 {
-  "name": "Travel Journal",
-  "short_name": "Travel Log",
-  "start_url": "/",
-  "scope": "/",
+  "name": "Travel Journal - 모바일 여행 플래너",
+  "short_name": "Travel Journal",
+  "description": "실시간 일행 동기화와 환율 계산을 지원하는 모바일 여행 관리 앱",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#0f172a",
   "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#0f172a",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/192/201/201623.png",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230284c7'/%3E%3Cpath d='M120 330l136-64 136 64-136-24z' fill='%23ffffff'/%3E%3Ccircle cx='256' cy='190' r='54' fill='none' stroke='%23e0f2fe' stroke-width='18'/%3E%3C/svg%3E",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     },
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/201/201623.png",
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230284c7'/%3E%3Cpath d='M120 330l136-64 136 64-136-24z' fill='%23ffffff'/%3E%3Ccircle cx='256' cy='190' r='54' fill='none' stroke='%23e0f2fe' stroke-width='18'/%3E%3C/svg%3E",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
     }
   ]
 }

@@ -2807,7 +2807,7 @@ function bindAllUiEvents() {
     }
   });
 
-  $('formAddChecklistItem')?.addEventListener('submit', async (e) => {
+   $('formAddChecklistItem')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
       const trip = getActiveTrip();

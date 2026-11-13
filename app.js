@@ -29,12 +29,12 @@ import * as Services from './services.js';
 // apiKey가 비어 있으면 에러 없이 자동으로 '⚪ 오프라인(로컬 저장)' 모드로 동작합니다.
 // ============================================================================
 const firebaseConfig = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyBp6NVo7O-ya5MfcmI1_NvnKKLnH3tGF3k",
+  authDomain: "travel-journal-8dfd3.firebaseapp.com",
+  projectId: "travel-journal-8dfd3",
+  storageBucket: "travel-journal-8dfd3.firebasestorage.app",
+  messagingSenderId: "210219932082",
+  appId: "1:210219932082:web:5afb3349cab5e09725acab"
 };
 
 // ============================================================================

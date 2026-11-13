@@ -1,9 +1,8 @@
 /**
  * Travel Journal - app.js (ES Module)
- * - Firebase Firestore v10 모듈형 SDK + LocalStorage 하이브리드 동기화
- * - DOMContentLoaded 이후 addEventListener & 이벤트 위임(Event Delegation)으로 버튼 먹통 원천 차단
- * - flightCache/{편명} Firestore 공용 캐싱 + services.js 연동
- * - 예약 ➔ 일정 & 지출 3중 자동 연동 + 전 항목 수정(Edit) + 1/N 정산 + Leaflet 지도 + 사진·통합 리뷰(allReviews) + AI 맞춤 일정 추천
+ * 1. ES Module 실행 시점 보장: document.readyState 체크 후 initApp() 즉시 실행
+ * 2. UI 이벤트 최우선 바인딩: Firebase 네트워크 연결보다 UI 클릭/폼 이벤트를 먼저 연결하여 버튼 먹통 원천 차단
+ * 3. 1단계 index.html의 모든 id / data-action 및 2단계 services.js의 export 함수명과 100% 일치
  */
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
@@ -22,11 +21,20 @@ import {
   arrayUnion
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 
-import * as Services from './services.js';
+import {
+  fetchLiveExchangeRate,
+  refreshMajorRates,
+  getCachedRateToKrw,
+  lookupFlightWithAirLabs,
+  AIRPORT_KO_MAP,
+  geocodePlace,
+  calcDistance,
+  compressImageFileToBase64,
+  calculateOneOverNSettlement
+} from './services.js';
 
 // ============================================================================
-// [Firebase 설정 블록] 발급받은 본인의 Firebase 프로젝트 설정값 6줄을 아래에 붙여넣으세요.
-// apiKey가 비어 있으면 에러 없이 자동으로 '⚪ 오프라인(로컬 저장)' 모드로 동작합니다.
+// [1. Firebase 설정값 적용]
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBp6NVo7O-ya5MfcmI1_NvnKKLnH3tGF3k",
@@ -38,78 +46,14 @@ const firebaseConfig = {
 };
 
 // ============================================================================
-// 1. services.js 함수 호환 어댑터 및 상수 정의
+// [2. 로컬 스토리지 키 및 전역 상태]
 // ============================================================================
-const lookupFlightWithAirLabs =
-  Services.lookupFlightWithAirLabs ||
-  Services.lookupFlightInfo ||
-  (async () => null);
+const STORAGE_TRIPS_KEY = 'TJ_TRIPS_ARCHIVE_V5';
+const STORAGE_PRIVATE_KEY = 'TJ_PRIVATE_BUDGETS_V5';
+const STORAGE_ALL_REVIEWS_KEY = 'TJ_ALL_REVIEWS_ARCHIVE_V5';
+const STORAGE_FLIGHT_CACHE_KEY = 'TJ_FLIGHT_CACHE_V5';
+const STORAGE_UID_KEY = 'TJ_DEVICE_USER_UID_V5';
 
-const fetchLiveExchangeRate =
-  Services.fetchLiveExchangeRate ||
-  Services.fetchLiveRateToKrw ||
-  (async (curr) => ({ rate: curr === 'KRW' ? 1 : 1000, source: 'fallback' }));
-
-const compressImageToBase64 =
-  Services.compressImageFileToBase64 ||
-  ((file) =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const MAX_W = 800;
-          let w = img.width;
-          let h = img.height;
-          if (w > MAX_W) {
-            h = Math.round((h * MAX_W) / w);
-            w = MAX_W;
-          }
-          const canvas = document.createElement('canvas');
-          canvas.width = w;
-          canvas.height = h;
-          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL('image/jpeg', 0.7));
-        };
-        img.onerror = reject;
-        img.src = e.target.result;
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    }));
-
-const STORAGE_TRIPS_KEY = 'TJ_TRIPS_ARCHIVE_V4';
-const STORAGE_PRIVATE_KEY = 'TJ_PRIVATE_BUDGETS_V4';
-const STORAGE_ALL_REVIEWS_KEY = 'TJ_ALL_REVIEWS_ARCHIVE_V4';
-const STORAGE_FLIGHT_CACHE_KEY = 'TJ_FLIGHT_CACHE_V4';
-const STORAGE_UID_KEY = 'TJ_DEVICE_USER_UID_V4';
-
-// 주요 공항 좌표 사전 (Leaflet 항공 노선 점선 연결용)
-const AIRPORT_COORDS = {
-  ICN: { name: '인천국제공항 (ICN)', lat: 37.4602, lng: 126.4407 },
-  GMP: { name: '김포국제공항 (GMP)', lat: 37.5583, lng: 126.7906 },
-  PUS: { name: '김해국제공항 (PUS)', lat: 35.1796, lng: 128.9382 },
-  CJU: { name: '제주국제공항 (CJU)', lat: 33.5104, lng: 126.4914 },
-  NRT: { name: '도쿄 나리타 (NRT)', lat: 35.7720, lng: 140.3929 },
-  HND: { name: '도쿄 하네다 (HND)', lat: 35.5494, lng: 139.7798 },
-  KIX: { name: '오사카 간사이 (KIX)', lat: 34.4320, lng: 135.2304 },
-  FUK: { name: '후쿠오카공항 (FUK)', lat: 33.5859, lng: 130.4507 },
-  YGJ: { name: '요나고 기타로 (YGJ)', lat: 35.4922, lng: 133.2364 },
-  CTS: { name: '삿포로 신치토세 (CTS)', lat: 42.7752, lng: 141.6923 },
-  OKA: { name: '오키나와 나하 (OKA)', lat: 26.1958, lng: 127.6458 },
-  TPE: { name: '타이베이 타오위안 (TPE)', lat: 25.0797, lng: 121.2342 },
-  HKG: { name: '홍콩 첵랍콕 (HKG)', lat: 22.3080, lng: 113.9185 },
-  DAD: { name: '다낭국제공항 (DAD)', lat: 16.0439, lng: 108.1992 },
-  BKK: { name: '방콕 수완나품 (BKK)', lat: 13.6900, lng: 100.7501 },
-  SIN: { name: '싱가포르 창이 (SIN)', lat: 1.3644, lng: 103.9915 },
-  CDG: { name: '파리 샤를드골 (CDG)', lat: 49.0097, lng: 2.5479 },
-  LAX: { name: '로스앤젤레스 (LAX)', lat: 33.9416, lng: -118.4085 },
-  JFK: { name: '뉴욕 JFK (JFK)', lat: 40.6413, lng: -73.7781 }
-};
-
-// ============================================================================
-// 2. 전역 앱 상태
-// ============================================================================
 let db = null;
 let isCloudOnline = false;
 let unsubscribeTrips = null;
@@ -126,16 +70,25 @@ let currentBookingFilter = '전체';
 let currentPhotoFilter = '전체';
 let currentReviewFilter = '전체';
 let currentChecklistSubTab = 'packing'; // 'packing' | 'shopping'
+
 let viewingPhotoId = null;
 let selectedReviewPhotoIds = [];
 let aiGeneratedSuggestions = [];
 
-// Leaflet 지도 인스턴스 및 레이어 그룹
+// 수정(Edit) 모드 추적 상태
+let editingScheduleId = null;
+let editingBookingId = null;
+let editingExpenseId = null;
+let editingReviewId = null;
+let editingReviewTripId = null;
+let currentReviewPriceMemo = '';
+
+// Leaflet 지도 인스턴스
 let leafletMap = null;
 let leafletLayerGroup = null;
 
 // ============================================================================
-// 3. 방어형 DOM 유틸리티 및 기기 고유 식별자
+// [3. DOM 헬퍼 및 공통 유틸리티]
 // ============================================================================
 const $ = (id) => document.getElementById(id);
 
@@ -199,7 +152,7 @@ async function shareOrCopyText(title, text, alertMsg = '클립보드에 복사�
       return;
     }
   } catch (err) {
-    // 사용자가 공유 창을 취소했거나 미지원 환경일 경우 클립보드 복사로 폴백
+    // 공유 창 취소 시 클립보드 복사로 전환
   }
 
   try {
@@ -225,61 +178,35 @@ async function shareOrCopyText(title, text, alertMsg = '클립보드에 복사�
   ta.remove();
 }
 
-// ============================================================================
-// 4. Service Worker 등록
-// ============================================================================
-function registerServiceWorkerSafe() {
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js').catch((err) => {
-        console.warn('Service Worker 등록 생략:', err);
-      });
-    });
-  }
+function calculateTripDays(trip) {
+  if (!trip || !trip.startDate || !trip.endDate) return 1;
+  const s = new Date(`${trip.startDate}T00:00:00`);
+  const e = new Date(`${trip.endDate}T00:00:00`);
+  if (isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) return 1;
+  return Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+}
+
+function getDateForTripDay(trip, dayNum) {
+  if (!trip || !trip.startDate) return '';
+  const d = new Date(`${trip.startDate}T00:00:00`);
+  if (isNaN(d.getTime())) return '';
+  d.setDate(d.getDate() + (Number(dayNum) - 1));
+  return d.toISOString().split('T')[0];
+}
+
+function inferDayNumberFromDate(trip, dateStr) {
+  if (!trip || !trip.startDate || !dateStr) return 1;
+  const totalDays = calculateTripDays(trip);
+  const target = new Date(`${dateStr}T00:00:00`);
+  const start = new Date(`${trip.startDate}T00:00:00`);
+  if (isNaN(target.getTime()) || isNaN(start.getTime())) return 1;
+  const diff = Math.round((target - start) / (1000 * 60 * 60 * 24)) + 1;
+  return Math.min(Math.max(diff, 1), totalDays);
 }
 
 // ============================================================================
-// 5. Firebase 초기화 & 하이브리드 스토리지 동기화
+// [4. 로컬 데이터 및 Firebase Firestore 동기화 레이어]
 // ============================================================================
-function updateSyncBadge(online) {
-  const badge = $('connectionStatusBadge');
-  if (!badge) return;
-  if (online) {
-    badge.textContent = '🟢 실시간 동기화';
-    badge.className = 'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700';
-  } else {
-    badge.textContent = '⚪ 오프라인';
-    badge.className = 'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600';
-  }
-}
-
-function initFirebaseSafely() {
-  const hasApiKey =
-    firebaseConfig &&
-    typeof firebaseConfig.apiKey === 'string' &&
-    firebaseConfig.apiKey.trim() !== '';
-
-  if (!hasApiKey) {
-    isCloudOnline = false;
-    updateSyncBadge(false);
-    return false;
-  }
-
-  try {
-    const app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-    isCloudOnline = true;
-    updateSyncBadge(true);
-    return true;
-  } catch (err) {
-    console.error('Firebase 초기화 오류 (오프라인 모드로 계속 동작):', err);
-    isCloudOnline = false;
-    db = null;
-    updateSyncBadge(false);
-    return false;
-  }
-}
-
 function normalizeTrip(raw) {
   if (!raw || typeof raw !== 'object') return null;
   return {
@@ -358,7 +285,46 @@ function saveLocalData() {
     localStorage.setItem(STORAGE_ALL_REVIEWS_KEY, JSON.stringify(allReviews));
     localStorage.setItem(STORAGE_FLIGHT_CACHE_KEY, JSON.stringify(localFlightCache));
   } catch (err) {
-    console.error('로컬 스토리지 저장 오류:', err);
+    console.error('로컬 저장 오류:', err);
+  }
+}
+
+function updateSyncBadge(online) {
+  const badge = $('connectionStatusBadge');
+  if (!badge) return;
+  if (online) {
+    badge.textContent = '🟢 실시간 동기화';
+    badge.className = 'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700';
+  } else {
+    badge.textContent = '⚪ 오프라인';
+    badge.className = 'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600';
+  }
+}
+
+function initFirebaseSafely() {
+  const hasApiKey =
+    firebaseConfig &&
+    typeof firebaseConfig.apiKey === 'string' &&
+    firebaseConfig.apiKey.trim() !== '';
+
+  if (!hasApiKey) {
+    isCloudOnline = false;
+    updateSyncBadge(false);
+    return false;
+  }
+
+  try {
+    const app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+    isCloudOnline = true;
+    updateSyncBadge(true);
+    return true;
+  } catch (err) {
+    console.error('Firebase 초기화 실패 (오프라인 모드로 계속 동작):', err);
+    isCloudOnline = false;
+    db = null;
+    updateSyncBadge(false);
+    return false;
   }
 }
 
@@ -388,7 +354,7 @@ async function syncTripToFirestore(trip) {
 
     const byteSize = new Blob([JSON.stringify(payload)]).size;
     if (byteSize > 950000) {
-      alert('클라우드 문서 용량(1MB) 한도에 근접하여 클라우드 동기화가 보류되었습니다. 사진 수를 줄여주세요.');
+      alert('클라우드 문서 용량(1MB) 한도에 근접하여 클라우드 동기화가 보류되었습니다. 사진 수를 조금 줄여주세요.');
       return;
     }
 
@@ -399,7 +365,6 @@ async function syncTripToFirestore(trip) {
 }
 
 async function syncReviewToGlobalCollection(reviewObj) {
-  // 로컬 통합 아카이브 반영
   const idx = allReviews.findIndex((r) => r.id === reviewObj.id);
   if (idx !== -1) {
     allReviews[idx] = { ...reviewObj };
@@ -408,12 +373,11 @@ async function syncReviewToGlobalCollection(reviewObj) {
   }
   saveLocalData();
 
-  // Firestore 최상위 allReviews 컬렉션 동기화
   if (!isCloudOnline || !db) return;
   try {
     await setDoc(doc(db, 'allReviews', reviewObj.id), reviewObj, { merge: true });
   } catch (err) {
-    console.error('allReviews 컬렉션 동기화 오류:', err);
+    console.warn('allReviews 동기화 경고:', err);
   }
 }
 
@@ -425,59 +389,70 @@ async function deleteReviewFromGlobalCollection(reviewId) {
   try {
     await deleteDoc(doc(db, 'allReviews', reviewId));
   } catch (err) {
-    console.warn('allReviews 삭제 오류:', err);
+    console.warn('allReviews 삭제 경고:', err);
   }
 }
 
-function startRealtimeListeners() {
+function startFirestoreRealtimeSync() {
   if (!isCloudOnline || !db) return;
 
   if (typeof unsubscribeTrips === 'function') unsubscribeTrips();
   if (typeof unsubscribeAllReviews === 'function') unsubscribeAllReviews();
 
   try {
-    // 1) 내가 속한 여행 목록 실시간 구독
     const tripsQuery = query(collection(db, 'trips'), where('memberIds', 'array-contains', deviceUid));
-    unsubscribeTrips = onSnapshot(tripsQuery, (snapshot) => {
-      const cloudTrips = [];
-      snapshot.forEach((docSnap) => {
-        const norm = normalizeTrip({ id: docSnap.id, ...docSnap.data() });
-        if (norm) cloudTrips.push(norm);
-      });
+    unsubscribeTrips = onSnapshot(
+      tripsQuery,
+      (snapshot) => {
+        const cloudTrips = [];
+        snapshot.forEach((docSnap) => {
+          const norm = normalizeTrip({ id: docSnap.id, ...docSnap.data() });
+          if (norm) cloudTrips.push(norm);
+        });
 
-      const cloudIds = new Set(cloudTrips.map((t) => t.id));
-      const localOnly = trips.filter((t) => !cloudIds.has(t.id));
-      localOnly.forEach((lt) => {
-        lt.memberIds = Array.from(new Set([...(lt.memberIds || []), deviceUid]));
-        syncTripToFirestore(lt);
-      });
+        const cloudIds = new Set(cloudTrips.map((t) => t.id));
+        const localOnly = trips.filter((t) => !cloudIds.has(t.id));
+        localOnly.forEach((lt) => {
+          lt.memberIds = Array.from(new Set([...(lt.memberIds || []), deviceUid]));
+          syncTripToFirestore(lt);
+        });
 
-      trips = [...cloudTrips, ...localOnly];
-      saveLocalData();
-
-      if (currentTripId) {
-        renderDetailView();
-      } else {
-        renderHomeView();
-      }
-    });
-
-    // 2) 최상위 통합 리뷰 아카이브(allReviews) 실시간 구독
-    unsubscribeAllReviews = onSnapshot(collection(db, 'allReviews'), (snapshot) => {
-      const cloudRevs = [];
-      snapshot.forEach((docSnap) => {
-        cloudRevs.push({ id: docSnap.id, ...docSnap.data() });
-      });
-      if (cloudRevs.length > 0) {
-        allReviews = cloudRevs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        trips = [...cloudTrips, ...localOnly];
         saveLocalData();
-        if (!currentTripId) {
-          renderHomeArchiveReviews();
+
+        if (currentTripId) {
+          renderDetailView();
+        } else {
+          renderHomeView();
         }
+      },
+      (err) => {
+        console.warn('Firestore trips 실시간 구독 경고:', err);
+        updateSyncBadge(false);
       }
-    });
+    );
+
+    unsubscribeAllReviews = onSnapshot(
+      collection(db, 'allReviews'),
+      (snapshot) => {
+        const cloudRevs = [];
+        snapshot.forEach((docSnap) => {
+          cloudRevs.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        if (cloudRevs.length > 0) {
+          allReviews = cloudRevs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+          saveLocalData();
+          if (!currentTripId) {
+            renderHomeArchiveReviews();
+          }
+        }
+      },
+      (err) => {
+        console.warn('Firestore allReviews 구독 경고:', err);
+      }
+    );
   } catch (err) {
-    console.error('실시간 구독 시작 오류:', err);
+    console.error('실시간 리스너 시작 실패:', err);
   }
 }
 
@@ -497,18 +472,16 @@ function getMyPrivateInfo(trip) {
 }
 
 // ============================================================================
-// 6. 항공편 조회 + Firestore 공용 캐싱 (flightCache/{편명})
+// [5. 항공편 조회 + Firestore flightCache/{편명} 공용 캐싱]
 // ============================================================================
 async function lookupFlightWithSharedCache(rawFlightCode) {
   const code = String(rawFlightCode || '').replace(/\s+/g, '').toUpperCase();
   if (!code) return null;
 
-  // 1) 로컬 메모리/스토리지 캐시 확인
   if (localFlightCache[code]) {
     return { ...localFlightCache[code], fromCache: true };
   }
 
-  // 2) Firestore 공용 캐시(flightCache/{편명}) 조회
   if (isCloudOnline && db) {
     try {
       const cacheRef = doc(db, 'flightCache', code);
@@ -520,11 +493,10 @@ async function lookupFlightWithSharedCache(rawFlightCode) {
         return { ...cachedData, fromCache: true };
       }
     } catch (err) {
-      console.warn('flightCache 조회 실패, API 직접 호출 진행:', err);
+      console.warn('Firestore flightCache 조회 건너뜀:', err);
     }
   }
 
-  // 3) 캐시 미스 시 services.js의 lookupFlightWithAirLabs 호출
   const apiResult = await lookupFlightWithAirLabs(code);
   if (apiResult) {
     const cleanRecord = {
@@ -541,12 +513,11 @@ async function lookupFlightWithSharedCache(rawFlightCode) {
     localFlightCache[code] = cleanRecord;
     saveLocalData();
 
-    // Firestore 공용 캐시에 저장
     if (isCloudOnline && db) {
       try {
         await setDoc(doc(db, 'flightCache', code), cleanRecord, { merge: true });
       } catch (err) {
-        console.warn('flightCache 저장 경고:', err);
+        console.warn('Firestore flightCache 저장 건너뜀:', err);
       }
     }
 
@@ -557,36 +528,53 @@ async function lookupFlightWithSharedCache(rawFlightCode) {
 }
 
 // ============================================================================
-// 7. 날짜/일차 계산 유틸리티
+// [6. 지출 모달 실시간 환율 및 원화 환산 미리보기]
 // ============================================================================
-function calculateTripDays(trip) {
-  if (!trip || !trip.startDate || !trip.endDate) return 1;
-  const s = new Date(`${trip.startDate}T00:00:00`);
-  const e = new Date(`${trip.endDate}T00:00:00`);
-  if (isNaN(s.getTime()) || isNaN(e.getTime()) || e < s) return 1;
-  return Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+function updateExpenseModalRatePreview() {
+  try {
+    const curr = ($('selectExpCurrency')?.value || 'KRW').toUpperCase();
+    const amount = Number($('inputExpAmount')?.value) || 0;
+    const rate = Number($('inputExpAppliedRate')?.value) || 0;
+
+    if ($('expRateUnitPrefix')) $('expRateUnitPrefix').textContent = `1 ${curr} =`;
+
+    const convertedKrw = Math.round(amount * rate);
+    if ($('expConvertedKrwPreview')) {
+      $('expConvertedKrwPreview').textContent = `${convertedKrw.toLocaleString()} KRW`;
+    }
+  } catch (err) {
+    console.error('환율 미리보기 계산 오류:', err);
+  }
 }
 
-function getDateForTripDay(trip, dayNum) {
-  if (!trip || !trip.startDate) return '';
-  const d = new Date(`${trip.startDate}T00:00:00`);
-  if (isNaN(d.getTime())) return '';
-  d.setDate(d.getDate() + (Number(dayNum) - 1));
-  return d.toISOString().split('T')[0];
-}
+async function syncExpenseModalRateFromApi() {
+  try {
+    const curr = ($('selectExpCurrency')?.value || 'KRW').toUpperCase();
+    const statusText = $('expRateStatusText');
+    const rateInput = $('inputExpAppliedRate');
 
-function inferDayNumberFromDate(trip, dateStr) {
-  if (!trip || !trip.startDate || !dateStr) return 1;
-  const totalDays = calculateTripDays(trip);
-  const target = new Date(`${dateStr}T00:00:00`);
-  const start = new Date(`${trip.startDate}T00:00:00`);
-  if (isNaN(target.getTime()) || isNaN(start.getTime())) return 1;
-  const diff = Math.round((target - start) / (1000 * 60 * 60 * 24)) + 1;
-  return Math.min(Math.max(diff, 1), totalDays);
+    if (curr === 'KRW') {
+      if (rateInput) rateInput.value = '1';
+      if (statusText) statusText.textContent = '적용 환율 (1 KRW = 1 KRW)';
+      updateExpenseModalRatePreview();
+      return;
+    }
+
+    if (statusText) statusText.textContent = `${curr} 실시간 환율 조회 중...`;
+    const info = await fetchLiveExchangeRate(curr);
+
+    if (rateInput) rateInput.value = String(info.rate);
+    if (statusText) {
+      statusText.textContent = `${info.displayUnit} · ${info.source}`;
+    }
+    updateExpenseModalRatePreview();
+  } catch (err) {
+    console.error('지출 모달 환율 조회 오류:', err);
+  }
 }
 
 // ============================================================================
-// 8. 홈 화면 렌더링 및 여행 상세 전환 (전체 리뷰 아카이브 포함)
+// [7. 홈 화면 & 전체 리뷰 아카이브 렌더링]
 // ============================================================================
 function renderHomeView() {
   const container = $('homeTripCardsContainer');
@@ -647,22 +635,10 @@ function renderHomeView() {
   renderHomeArchiveReviews();
 }
 
-/**
- * 홈 화면 하단 [전체 리뷰 아카이브] 동적 주입 및 렌더링 (allReviews 기반)
- */
 function renderHomeArchiveReviews() {
-  const homeEl = $('homeView');
-  if (!homeEl) return;
+  const container = $('homeAllReviewsContainer');
+  if (!container) return;
 
-  let archiveSection = $('homeAllReviewsSection');
-  if (!archiveSection) {
-    archiveSection = document.createElement('section');
-    archiveSection.id = 'homeAllReviewsSection';
-    archiveSection.className = 'space-y-2.5 pt-2';
-    homeEl.appendChild(archiveSection);
-  }
-
-  // 모든 여행의 리뷰와 allReviews 병합 중복 제거
   const mergedMap = new Map();
   allReviews.forEach((r) => mergedMap.set(r.id, r));
   trips.forEach((t) => {
@@ -677,11 +653,11 @@ function renderHomeArchiveReviews() {
     (b.createdAt || '').localeCompare(a.createdAt || '')
   );
 
+  if ($('homeAllReviewsCount')) $('homeAllReviewsCount').textContent = String(combinedReviews.length);
+
   if (combinedReviews.length === 0) {
-    archiveSection.innerHTML = `
-      <div class="flex items-center justify-between px-1">
-        <h3 class="text-xs font-extrabold text-slate-700">전체 리뷰 아카이브 <span class="text-amber-600 ml-1">0</span></h3>
-      </div>
+    if ($('homeAllReviewsAvg')) $('homeAllReviewsAvg').textContent = '평균 ★ 0.0';
+    container.innerHTML = `
       <div class="py-8 px-4 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
         <p class="text-xs">아직 작성된 전체 리뷰가 없습니다. 여행 상세에서 리뷰를 남겨보세요!</p>
       </div>
@@ -693,43 +669,37 @@ function renderHomeArchiveReviews() {
     combinedReviews.reduce((acc, r) => acc + (Number(r.rating) || 5), 0) / combinedReviews.length
   ).toFixed(1);
 
-  archiveSection.innerHTML = `
-    <div class="flex items-center justify-between px-1">
-      <h3 class="text-xs font-extrabold text-slate-700">전체 리뷰 아카이브 <span class="text-amber-600 ml-1">${combinedReviews.length}</span></h3>
-      <span class="text-[11px] font-bold text-amber-600">평균 ★ ${avgAll}</span>
-    </div>
-    <div class="space-y-2.5">
-      ${combinedReviews
-        .slice(0, 10)
-        .map((rv) => {
-          const rating = Number(rv.rating) || 5;
-          const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
-          return `
-            <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
-              <div class="flex items-start justify-between gap-2">
-                <div class="min-w-0 flex-1">
-                  <div class="flex items-center gap-1.5 flex-wrap">
-                    <span class="text-[10px] font-extrabold px-2 py-0.5 rounded bg-sky-50 text-sky-700">${escapeHtml(rv.category || '장소')}</span>
-                    ${rv.tripTitle ? `<span class="text-[10px] font-semibold text-slate-400 truncate max-w-[130px]">${escapeHtml(rv.tripTitle)}</span>` : ''}
-                  </div>
-                  <h4 class="text-xs font-extrabold text-slate-800 mt-1 truncate">${escapeHtml(rv.place)}</h4>
-                  <span class="text-[11px] text-amber-500 font-bold">${stars}</span>
-                </div>
-                ${
-                  rv.tripId
-                    ? `<button type="button" data-action="edit-global-review" data-trip-id="${escapeHtml(rv.tripId)}" data-id="${escapeHtml(rv.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="리뷰 수정">
-                        <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
-                      </button>`
-                    : ''
-                }
+  if ($('homeAllReviewsAvg')) $('homeAllReviewsAvg').textContent = `평균 ★ ${avgAll}`;
+
+  container.innerHTML = combinedReviews
+    .slice(0, 12)
+    .map((rv) => {
+      const rating = Number(rv.rating) || 5;
+      const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
+      return `
+        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-[10px] font-extrabold px-2 py-0.5 rounded bg-sky-50 text-sky-700">${escapeHtml(rv.category || '장소')}</span>
+                ${rv.tripTitle ? `<span class="text-[10px] font-semibold text-slate-400 truncate max-w-[140px]">${escapeHtml(rv.tripTitle)}</span>` : ''}
               </div>
-              <p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl line-clamp-2">${escapeHtml(rv.content)}</p>
+              <h4 class="text-xs font-extrabold text-slate-800 mt-1 truncate">${escapeHtml(rv.place)}</h4>
+              <span class="text-[11px] text-amber-500 font-bold">${stars}</span>
             </div>
-          `;
-        })
-        .join('')}
-    </div>
-  `;
+            ${
+              rv.tripId
+                ? `<button type="button" data-action="edit-global-review" data-trip-id="${escapeHtml(rv.tripId)}" data-id="${escapeHtml(rv.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="리뷰 수정">
+                    <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
+                  </button>`
+                : ''
+            }
+          </div>
+          <p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl line-clamp-2">${escapeHtml(rv.content)}</p>
+        </div>
+      `;
+    })
+    .join('');
 }
 
 function enterTripDetail(tripId) {
@@ -793,7 +763,7 @@ function switchMainTab(tabName) {
 }
 
 // ============================================================================
-// 9. 상세 화면 6개 탭 통합 렌더링 + Leaflet 동선 지도 + AI 추천 일정
+// [8. 여행 상세 화면 6개 탭 렌더링]
 // ============================================================================
 function renderDetailView() {
   const trip = getActiveTrip();
@@ -858,98 +828,20 @@ function populateAllDaySelectors(trip) {
   }
 }
 
-// ============================================================================
-// [탭 1] 일정(Itinerary) + Leaflet 지도 + AI 맞춤 일정 추천 패널
-// ============================================================================
-function ensureLeafletAssetsAndRenderMap(trip, dayItems) {
-  const panel = $('tabPanelItinerary');
-  if (!panel) return;
-
-  let mapBox = $('itineraryMapWrapper');
-  if (!mapBox) {
-    mapBox = document.createElement('div');
-    mapBox.id = 'itineraryMapWrapper';
-    mapBox.className = 'bg-white rounded-2xl p-3.5 border border-slate-200/80 shadow-2xs space-y-2.5';
-    mapBox.innerHTML = `
-      <div class="flex items-center justify-between">
-        <span class="text-xs font-extrabold text-slate-800"><i class="fa-solid fa-route text-sky-600 mr-1"></i>일자별 동선 지도 & 길찾기</span>
-        <div class="flex items-center gap-1">
-          <button id="btnOpenAiPlannerPanel" type="button" class="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 text-[11px] font-extrabold hover:bg-indigo-100 transition">
-            ✨ AI 추천 일정
-          </button>
-          <button id="btnShareItineraryText" type="button" class="px-2.5 py-1 rounded-lg bg-slate-100 text-slate-700 text-[11px] font-bold hover:bg-slate-200 transition">
-            공유 📤
-          </button>
-        </div>
-      </div>
-
-      <!-- AI 맞춤 일정 추천 접이식 패널 -->
-      <div id="aiPlannerBox" class="hidden bg-indigo-50/70 border border-indigo-100 rounded-xl p-3 space-y-2">
-        <div class="flex items-center justify-between">
-          <span class="text-[11px] font-extrabold text-indigo-900">✨ 기존 예약·일정 기반 AI 맞춤 코스 생성</span>
-          <button id="btnCloseAiPlannerBox" type="button" class="text-slate-400 hover:text-slate-600 text-xs px-1"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="grid grid-cols-3 gap-1.5">
-          <input id="inputAiConcept" type="text" placeholder="컨셉 (예: 미식·온천)" class="col-span-2 bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs outline-none" />
-          <input id="inputAiTargetBudget" type="number" placeholder="예산(만원)" class="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none" />
-        </div>
-        <button id="btnGenerateAiSchedule" type="button" class="w-full py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold transition">
-          추천 일정 생성하기
-        </button>
-        <div id="aiSuggestionResultArea" class="hidden space-y-2 pt-1 border-t border-indigo-100">
-          <div id="aiSuggestionItemsList" class="space-y-1 text-[11px] text-slate-700 max-h-40 overflow-y-auto no-scrollbar"></div>
-          <button id="btnApplyAllAiSchedules" type="button" class="w-full py-2 rounded-lg bg-sky-600 hover:bg-sky-700 text-white text-xs font-extrabold transition">
-            내 일정에 한 번에 추가 ➕
-          </button>
-        </div>
-      </div>
-
-      <div id="leafletRouteMapContainer" class="w-full h-44 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden z-10"></div>
-      <div id="localRouteLinksList" class="space-y-1.5 pt-1"></div>
-    `;
-    const timelineEl = $('itineraryTimelineContainer');
-    if (timelineEl && timelineEl.parentNode) {
-      timelineEl.parentNode.insertBefore(mapBox, timelineEl);
-    }
-  }
-
-  // 공항 좌표 매칭 및 현지 장소 Google Maps 길찾기 리스트 구성
-  const matchedAirports = [];
-  const localStops = [];
-
-  dayItems.forEach((item) => {
-    const text = `${item.place || ''} ${item.memo || ''}`.toUpperCase();
-    const codeMatches = text.match(/\b[A-Z]{3}\b/g) || [];
-    codeMatches.forEach((code) => {
-      if (AIRPORT_COORDS[code] && !matchedAirports.find((a) => a.code === code)) {
-        matchedAirports.push({ code, ...AIRPORT_COORDS[code] });
-      }
-    });
-
-    if (item.place) {
-      localStops.push({
-        time: item.time || '',
-        place: item.place,
-        memo: item.memo || ''
-      });
-    }
-  });
-
-  // 예약 내역의 항공편 공항 코드도 함께 확인
-  (trip.bookings || []).forEach((bk) => {
-    if (bk.category === '항공') {
-      const bText = `${bk.title || ''} ${bk.memo || ''}`.toUpperCase();
-      const bCodes = bText.match(/\b[A-Z]{3}\b/g) || [];
-      bCodes.forEach((code) => {
-        if (AIRPORT_COORDS[code] && !matchedAirports.find((a) => a.code === code)) {
-          matchedAirports.push({ code, ...AIRPORT_COORDS[code] });
-        }
-      });
-    }
-  });
-
-  // 현지 숙소·관광지·식당 중심 일자별 이동 동선 & Google Maps 길찾기 링크 렌더링
+// [탭 1] 일정 + Leaflet 동선 지도 + Google Maps 바로가기
+async function renderRouteMapAndLinks(trip, dayItems) {
   const linksContainer = $('localRouteLinksList');
+  const mapDiv = $('leafletRouteMapContainer');
+
+  const localStops = dayItems
+    .filter((item) => item.place)
+    .map((item) => ({
+      time: item.time || '',
+      place: item.place,
+      memo: item.memo || ''
+    }));
+
+  // 1) 현지 장소 Google Maps 길찾기 리스트 표시
   if (linksContainer) {
     if (localStops.length === 0) {
       linksContainer.innerHTML = `<p class="text-[11px] text-slate-400 text-center py-1">일정을 추가하면 장소별 Google Maps 길찾기 링크가 자동 생성됩니다.</p>`;
@@ -987,63 +879,76 @@ function ensureLeafletAssetsAndRenderMap(trip, dayItems) {
     }
   }
 
-  // Leaflet CSS/JS 동적 로드 및 지도 렌더링 (공항 간 점선 노선 연결)
-  const renderLeaflet = () => {
-    try {
-      if (typeof window.L === 'undefined') return;
-      const mapDiv = $('leafletRouteMapContainer');
-      if (!mapDiv) return;
+  // 2) Leaflet 지도 마커 및 점선 연결
+  if (!mapDiv || typeof window.L === 'undefined') return;
 
-      if (!leafletMap) {
-        leafletMap = window.L.map(mapDiv, { zoomControl: false }).setView([35.6812, 139.7671], 5);
-        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '&copy; OpenStreetMap'
-        }).addTo(leafletMap);
-        leafletLayerGroup = window.L.layerGroup().addTo(leafletMap);
-      }
+  try {
+    if (!leafletMap) {
+      leafletMap = window.L.map(mapDiv, { zoomControl: false }).setView([35.4681, 133.0484], 6);
+      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap'
+      }).addTo(leafletMap);
+      leafletLayerGroup = window.L.layerGroup().addTo(leafletMap);
+    }
 
-      leafletLayerGroup.clearLayers();
+    leafletLayerGroup.clearLayers();
 
-      if (matchedAirports.length >= 1) {
-        const latLngs = matchedAirports.map((ap) => [ap.lat, ap.lng]);
-        matchedAirports.forEach((ap) => {
-          window.L.marker([ap.lat, ap.lng]).bindPopup(`✈️ ${ap.name}`).addTo(leafletLayerGroup);
+    const coordsPoints = [];
+
+    // 예약된 항공편 공항 코드 먼저 확인
+    (trip.bookings || []).forEach((bk) => {
+      if (bk.category === '항공') {
+        const text = `${bk.title || ''} ${bk.memo || ''}`.toUpperCase();
+        const codes = text.match(/\b[A-Z]{3}\b/g) || [];
+        codes.forEach((code) => {
+          if (AIRPORT_KO_MAP[code] && !coordsPoints.find((p) => p.label === code)) {
+            coordsPoints.push({
+              lat: AIRPORT_KO_MAP[code].lat,
+              lng: AIRPORT_KO_MAP[code].lng,
+              label: `✈️ ${AIRPORT_KO_MAP[code].name} (${code})`
+            });
+          }
         });
-        if (latLngs.length >= 2) {
-          window.L.polyline(latLngs, {
-            color: '#0284c7',
-            weight: 3,
-            dashArray: '8, 8'
-          }).addTo(leafletLayerGroup);
-          leafletMap.fitBounds(window.L.latLngBounds(latLngs), { padding: [24, 24] });
-        } else {
-          leafletMap.setView(latLngs[0], 8);
-        }
-      } else {
-        // 공항 좌표가 없는 현지 일정 위주일 경우 기본 중심 뷰 유지
-        leafletMap.setView([35.6812, 139.7671], 5);
       }
-      setTimeout(() => leafletMap.invalidateSize(), 100);
-    } catch (err) {
-      console.warn('Leaflet 지도 렌더링 경고:', err);
-    }
-  };
+    });
 
-  if (typeof window.L !== 'undefined') {
-    renderLeaflet();
-  } else {
-    if (!document.querySelector('link[href*="leaflet.css"]')) {
-      const link = document.createElement('link');
-      link.rel = 'stylesheet';
-      link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-      document.head.appendChild(link);
+    // 당일 일정 장소 좌표 변환
+    for (const stop of localStops) {
+      const geo = await geocodePlace(stop.place);
+      if (geo && typeof geo.lat === 'number' && typeof geo.lng === 'number') {
+        coordsPoints.push({
+          lat: geo.lat,
+          lng: geo.lng,
+          label: `📍 [${stop.time}] ${stop.place}`
+        });
+      }
     }
-    if (!document.querySelector('script[src*="leaflet.js"]')) {
-      const script = document.createElement('script');
-      script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-      script.onload = renderLeaflet;
-      document.head.appendChild(script);
+
+    if (coordsPoints.length > 0) {
+      const latLngs = coordsPoints.map((pt) => [pt.lat, pt.lng]);
+      coordsPoints.forEach((pt) => {
+        window.L.marker([pt.lat, pt.lng]).bindPopup(pt.label).addTo(leafletLayerGroup);
+      });
+
+      if (latLngs.length >= 2) {
+        window.L.polyline(latLngs, {
+          color: '#0284c7',
+          weight: 3,
+          dashArray: '6, 6'
+        }).addTo(leafletLayerGroup);
+        leafletMap.fitBounds(window.L.latLngBounds(latLngs), { padding: [24, 24] });
+      } else {
+        leafletMap.setView(latLngs[0], 10);
+      }
+    } else {
+      const destGeo = await geocodePlace(trip.destination);
+      if (destGeo) {
+        leafletMap.setView([destGeo.lat, destGeo.lng], 9);
+      }
     }
+    setTimeout(() => leafletMap.invalidateSize(), 80);
+  } catch (err) {
+    console.warn('Leaflet 지도 갱신 경고:', err);
   }
 }
 
@@ -1056,7 +961,7 @@ function renderItineraryTab(trip) {
     .filter((s) => Number(s.day) === selectedDay)
     .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
 
-  ensureLeafletAssetsAndRenderMap(trip, items);
+  renderRouteMapAndLinks(trip, items);
 
   if (items.length === 0) {
     container.innerHTML = `
@@ -1099,9 +1004,7 @@ function renderItineraryTab(trip) {
     .join('');
 }
 
-// ============================================================================
-// [탭 2] 예약(Bookings) - 편명 자동조회 + 3중 연동 + 수정/삭제
-// ============================================================================
+// [탭 2] 예약 렌더링
 function renderBookingsTab(trip) {
   const container = $('bookingCardsContainer');
   if (!container) return;
@@ -1158,7 +1061,6 @@ function renderBookingsTab(trip) {
               </button>
             </div>
           </div>
-
           <div class="flex items-center justify-between gap-2">
             ${b.code ? `<span class="font-mono text-[11px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg">예약번호: <strong>${escapeHtml(b.code)}</strong></span>` : '<span></span>'}
             ${costInfo}
@@ -1170,9 +1072,7 @@ function renderBookingsTab(trip) {
     .join('');
 }
 
-// ============================================================================
-// [탭 3] 지출/정산(Expenses) - 개인 예산 + 1/N 정산 + 공유 + 수정/삭제
-// ============================================================================
+// [탭 3] 지출/정산 렌더링 (services.js의 calculateOneOverNSettlement 사용)
 function renderExpensesTab(trip) {
   const priv = getMyPrivateInfo(trip);
   const me = priv.myNickname;
@@ -1180,38 +1080,7 @@ function renderExpensesTab(trip) {
   const expenses = trip.expenses || [];
   const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : [me];
 
-  let mySpentKrw = 0;
-  let groupTotalKrw = 0;
-  const netBalance = {};
-  members.forEach((m) => {
-    netBalance[m] = 0;
-  });
-
-  expenses.forEach((exp) => {
-    const amount = Number(exp.amount) || 0;
-    const rate = Number(exp.rateToKrw) || 1;
-    const totalKrw = amount * rate;
-    groupTotalKrw += totalKrw;
-
-    const participants =
-      Array.isArray(exp.participants) && exp.participants.length > 0
-        ? exp.participants
-        : [exp.payer || me];
-    const perPersonKrw = totalKrw / participants.length;
-    const payer = exp.payer || me;
-
-    if (participants.includes(me)) {
-      mySpentKrw += perPersonKrw;
-    }
-
-    if (netBalance[payer] === undefined) netBalance[payer] = 0;
-    netBalance[payer] += totalKrw;
-
-    participants.forEach((p) => {
-      if (netBalance[p] === undefined) netBalance[p] = 0;
-      netBalance[p] -= perPersonKrw;
-    });
-  });
+  const { groupTotalKrw, mySpentKrw, transfers } = calculateOneOverNSettlement(expenses, members, me);
 
   const remainKrw = totalBudget - mySpentKrw;
   const remainPercent =
@@ -1241,56 +1110,22 @@ function renderExpensesTab(trip) {
     $('groupTotalExpenseKrw').textContent = `총 ${Math.round(groupTotalKrw).toLocaleString()}원`;
   }
 
-  // 최소 이체 정산 계산
-  const debtors = [];
-  const creditors = [];
-  Object.keys(netBalance).forEach((name) => {
-    const diff = Math.round(netBalance[name]);
-    if (diff < -10) debtors.push({ name, amount: Math.abs(diff) });
-    else if (diff > 10) creditors.push({ name, amount: diff });
-  });
-
-  debtors.sort((a, b) => b.amount - a.amount);
-  creditors.sort((a, b) => b.amount - a.amount);
-
-  const transfers = [];
-  let i = 0;
-  let j = 0;
-  while (i < debtors.length && j < creditors.length) {
-    const send = Math.min(debtors[i].amount, creditors[j].amount);
-    if (send > 0) {
-      transfers.push({ from: debtors[i].name, to: creditors[j].name, amount: send });
-    }
-    debtors[i].amount -= send;
-    creditors[j].amount -= send;
-    if (debtors[i].amount <= 10) i++;
-    if (creditors[j].amount <= 10) j++;
-  }
-
   const summaryEl = $('settlementTransfersContainer');
   if (summaryEl) {
-    const transferHtml =
-      transfers.length === 0
-        ? `<p class="text-emerald-300 font-semibold py-1">정산할 송금 차액이 없습니다.</p>`
-        : transfers
-            .map(
-              (t) => `
-              <div class="flex items-center justify-between bg-slate-800 px-3 py-2 rounded-xl">
-                <span><strong class="text-amber-300">${escapeHtml(t.from)}</strong> ➔ <strong class="text-sky-300">${escapeHtml(t.to)}</strong>에게 송금</span>
-                <span class="font-extrabold text-white">${Math.round(t.amount).toLocaleString()}원</span>
-              </div>
-            `
-            )
-            .join('');
-
-    summaryEl.innerHTML = `
-      ${transferHtml}
-      <div class="pt-1.5 flex justify-end">
-        <button id="btnShareSettlementSummary" type="button" class="px-3 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-slate-950 text-[11px] font-extrabold transition">
-          정산 내역 카톡 공유 💸
-        </button>
-      </div>
-    `;
+    if (transfers.length === 0) {
+      summaryEl.innerHTML = `<p class="text-emerald-300 font-semibold py-1">정산할 송금 차액이 없습니다.</p>`;
+    } else {
+      summaryEl.innerHTML = transfers
+        .map(
+          (t) => `
+          <div class="flex items-center justify-between bg-slate-800 px-3 py-2 rounded-xl">
+            <span><strong class="text-amber-300">${escapeHtml(t.from)}</strong> ➔ <strong class="text-sky-300">${escapeHtml(t.to)}</strong>에게 송금</span>
+            <span class="font-extrabold text-white">${Math.round(t.amount).toLocaleString()}원</span>
+          </div>
+        `
+        )
+        .join('');
+    }
   }
 
   const listEl = $('expenseListContainer');
@@ -1348,30 +1183,10 @@ function renderExpensesTab(trip) {
     .join('');
 }
 
-// ============================================================================
-// [탭 4] 사진(Photos) - 카테고리 필터 + 크게 보기 + 수정/삭제
-// ============================================================================
+// [탭 4] 사진 갤러리 렌더링
 function renderPhotosTab(trip) {
   const grid = $('photoGalleryGrid');
   if (!grid) return;
-
-  // 카테고리 필터 바 동적 삽입 (숙소, 관광지, 식당, 이동/풍경, 기타)
-  const panel = $('tabPanelPhotos');
-  if (panel && !$('photoCategoryChipsBar')) {
-    const bar = document.createElement('div');
-    bar.id = 'photoCategoryChipsBar';
-    bar.className = 'flex overflow-x-auto no-scrollbar gap-1.5 pb-1';
-    const cats = ['전체', '숙소', '관광지', '식당', '이동/풍경', '기타'];
-    bar.innerHTML = cats
-      .map(
-        (c) =>
-          `<button type="button" data-photo-cat="${c}" class="photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold ${
-            c === '전체' ? 'bg-slate-800 text-white' : 'bg-white border border-slate-200 text-slate-600'
-          }">${c}</button>`
-      )
-      .join('');
-    grid.parentNode.insertBefore(bar, grid);
-  }
 
   const allPhotos = trip.photos || [];
   const dayFilter = $('selectPhotoDayFilter')?.value || 'ALL';
@@ -1415,9 +1230,7 @@ function renderPhotosTab(trip) {
     .join('');
 }
 
-// ============================================================================
-// [탭 5] 리뷰(Reviews) - 첨부 사진 표시 + 예약 불러오기 + 수정/삭제
-// ============================================================================
+// [탭 5] 리뷰 렌더링
 function renderReviewsTab(trip) {
   const container = $('reviewCardsContainer');
   if (!container) return;
@@ -1502,38 +1315,10 @@ function renderReviewsTab(trip) {
   container.innerHTML = summaryBanner + cardsHtml;
 }
 
-// ============================================================================
 // [탭 6] 체크리스트 & 쇼핑리스트 분리 렌더링
-// ============================================================================
 function renderChecklistTab(trip) {
   const container = $('checklistItemsContainer');
   if (!container) return;
-
-  // 서브 탭(여행 준비물 vs 쇼핑 목록) UI 동적 구성
-  const formEl = $('formAddChecklistItem');
-  if (formEl && !$('checklistSubTabSwitch')) {
-    const switchDiv = document.createElement('div');
-    switchDiv.id = 'checklistSubTabSwitch';
-    switchDiv.className = 'grid grid-cols-2 gap-1.5 bg-slate-100 p-1 rounded-xl mb-2';
-    switchDiv.innerHTML = `
-      <button type="button" data-checklist-mode="packing" class="cl-mode-btn py-2 rounded-lg text-xs font-extrabold bg-white text-sky-600 shadow-2xs transition">
-        🧳 여행 준비물
-      </button>
-      <button type="button" data-checklist-mode="shopping" class="cl-mode-btn py-2 rounded-lg text-xs font-bold text-slate-500 transition">
-        🛍️ 쇼핑 목록
-      </button>
-    `;
-    formEl.parentNode.insertBefore(switchDiv, formEl);
-
-    // 쇼핑 가격 입력칸 추가
-    const priceInput = document.createElement('input');
-    priceInput.id = 'inputShoppingExpectedPrice';
-    priceInput.type = 'number';
-    priceInput.min = '0';
-    priceInput.placeholder = '예상가';
-    priceInput.className = 'hidden touch-target w-24 bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs font-bold outline-none focus:border-sky-500';
-    formEl.insertBefore(priceInput, $('btnAddChecklistSubmit'));
-  }
 
   const isShopping = currentChecklistSubTab === 'shopping';
   const activeList = isShopping ? trip.shoppingList || [] : trip.packingList || [];
@@ -1577,121 +1362,6 @@ function renderChecklistTab(trip) {
     .join('');
 }
 
-// ============================================================================
-// 10. 모달 내부 동적 UI 확장 (항공편 자동조회, 예약 ➔ 일정/지출 3중 연동, 리뷰 불러오기)
-// ============================================================================
-function enhanceModalsOnStartup() {
-  // 1) 예약 모달에 [편명 자동조회] + 비용·결제자·분담·자동연동 체크박스 주입
-  const bookingForm = $('formCreateBooking');
-  if (bookingForm && !$('bookingAutoSyncSection')) {
-    const titleInput = $('inputBookingTitle');
-    if (titleInput && titleInput.parentNode) {
-      const lookupRow = document.createElement('div');
-      lookupRow.className = 'flex gap-1.5 mt-1.5';
-      lookupRow.innerHTML = `
-        <input id="inputBookingFlightLookupCode" type="text" placeholder="항공편명 입력 (예: RS471, KE703)" class="touch-target flex-1 uppercase font-mono bg-sky-50/70 border border-sky-200 rounded-xl px-3 text-xs font-bold outline-none" />
-        <button id="btnLookupBookingFlight" type="button" class="touch-target px-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-extrabold shrink-0 transition">
-          편명 자동조회 ✈️
-        </button>
-      `;
-      titleInput.parentNode.appendChild(lookupRow);
-    }
-
-    const syncBox = document.createElement('div');
-    syncBox.id = 'bookingAutoSyncSection';
-    syncBox.className = 'bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2.5';
-    syncBox.innerHTML = `
-      <span class="text-xs font-extrabold text-slate-700 block">예약 비용 및 일정·지출 3중 자동 연동</span>
-      <div class="grid grid-cols-3 gap-2">
-        <select id="selectBookingCurrency" class="touch-target bg-white border border-slate-200 rounded-xl px-2 text-xs font-extrabold outline-none">
-          <option value="KRW">KRW</option>
-          <option value="JPY">JPY</option>
-          <option value="USD">USD</option>
-          <option value="EUR">EUR</option>
-        </select>
-        <input id="inputBookingAmount" type="number" step="any" min="0" placeholder="예약 결제 금액 (선택)" class="touch-target col-span-2 bg-white border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none" />
-      </div>
-      <div>
-        <label class="text-[11px] font-semibold text-slate-500 block mb-1">결제자</label>
-        <select id="selectBookingPayer" class="touch-target w-full bg-white border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none"></select>
-      </div>
-      <div>
-        <span class="text-[11px] font-semibold text-slate-500 block mb-1">분담 인원</span>
-        <div id="bookingParticipantsGroup" class="flex flex-wrap gap-2"></div>
-      </div>
-      <label class="flex items-center gap-2 text-xs font-bold text-sky-800 cursor-pointer pt-1">
-        <input id="chkBookingAutoSync" type="checkbox" checked class="w-4 h-4 rounded border-slate-300 text-sky-600" />
-        <span>일정 및 지출 자동 반영</span>
-      </label>
-    `;
-
-    const submitBtnRow = $('btnSubmitCreateBooking')?.parentNode;
-    if (submitBtnRow) {
-      bookingForm.insertBefore(syncBox, submitBtnRow);
-    }
-  }
-
-  // 2) 사진 추가 모달에 카테고리 셀렉트 주입
-  const photoForm = $('formCreatePhoto');
-  if (photoForm && !$('selectPhotoCategory')) {
-    const placeInput = $('inputPhotoPlace');
-    if (placeInput && placeInput.parentNode) {
-      const catDiv = document.createElement('div');
-      catDiv.innerHTML = `
-        <label class="text-xs font-semibold text-slate-600 block mb-1">사진 카테고리</label>
-        <select id="selectPhotoCategory" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
-          <option value="숙소">숙소</option>
-          <option value="관광지" selected>관광지</option>
-          <option value="식당">식당</option>
-          <option value="이동/풍경">이동/풍경</option>
-          <option value="기타">기타</option>
-        </select>
-      `;
-      photoForm.insertBefore(catDiv, placeInput.parentNode);
-    }
-  }
-
-  // 3) 사진 크게 보기 모달에 [사진 정보 수정] 버튼 추가
-  const deletePhotoBtn = $('btnDeleteViewingPhoto');
-  if (deletePhotoBtn && !$('btnEditViewingPhoto')) {
-    const editBtn = document.createElement('button');
-    editBtn.id = 'btnEditViewingPhoto';
-    editBtn.type = 'button';
-    editBtn.className = 'touch-target flex items-center justify-center rounded-xl text-sky-300 hover:bg-white/10 transition';
-    editBtn.title = '사진 정보 수정';
-    editBtn.innerHTML = '<i class="fa-solid fa-pen text-sm pointer-events-none"></i>';
-    deletePhotoBtn.parentNode.insertBefore(editBtn, deletePhotoBtn);
-  }
-
-  // 4) 리뷰 작성 모달에 [예약 내역 불러오기] & [여행 사진에서 불러오기] 주입
-  const reviewForm = $('formCreateReview');
-  if (reviewForm && !$('selectReviewFromBooking')) {
-    const topBox = document.createElement('div');
-    topBox.className = 'bg-sky-50/70 border border-sky-100 rounded-xl p-2.5 space-y-1.5';
-    topBox.innerHTML = `
-      <label class="text-[11px] font-extrabold text-sky-900 block"><i class="fa-solid fa-bookmark text-sky-600 mr-1"></i>예약 내역 불러오기 (장소·카테고리·가격 자동 입력)</label>
-      <select id="selectReviewFromBooking" class="touch-target w-full bg-white border border-slate-200 rounded-lg px-2.5 text-xs font-medium text-slate-700 outline-none">
-        <option value="">직접 입력 (또는 예약 내역 선택)</option>
-      </select>
-    `;
-    reviewForm.insertBefore(topBox, reviewForm.firstChild);
-
-    const photoAttachBox = document.createElement('div');
-    photoAttachBox.className = 'bg-slate-50 border border-slate-200 rounded-xl p-2.5 space-y-2';
-    photoAttachBox.innerHTML = `
-      <div class="flex items-center justify-between">
-        <span class="text-[11px] font-extrabold text-slate-700"><i class="fa-solid fa-images text-sky-600 mr-1"></i>여행 사진에서 불러오기</span>
-        <span id="reviewAttachedPhotoCount" class="text-[10px] font-bold text-sky-600">0장 첨부됨</span>
-      </div>
-      <div id="reviewPhotoThumbnailsGrid" class="grid grid-cols-4 gap-1.5 max-h-32 overflow-y-auto no-scrollbar"></div>
-    `;
-    const submitRow = $('btnSubmitCreateReview')?.parentNode;
-    if (submitRow) {
-      reviewForm.insertBefore(photoAttachBox, submitRow);
-    }
-  }
-}
-
 function setReviewStarRating(val) {
   const num = Math.min(Math.max(Number(val) || 5, 1), 5);
   if ($('inputReviewRatingValue')) $('inputReviewRatingValue').value = String(num);
@@ -1732,7 +1402,7 @@ function renderReviewPhotoThumbnails(trip) {
           selected ? 'border-sky-500 ring-2 ring-sky-200' : 'border-transparent opacity-75'
         }">
           <img src="${p.dataUrl}" class="w-full h-full object-cover pointer-events-none" />
-          ${selected ? '<span class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-sky-600 text-white text-[9px] flex items-center justify-center"><i class="fa-solid fa-check"></i></span>' : ''}
+          ${selected ? '<span class="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-sky-600 text-white text-[9px] flex items-center justify-center pointer-events-none"><i class="fa-solid fa-check"></i></span>' : ''}
         </div>
       `;
     })
@@ -1740,49 +1410,226 @@ function renderReviewPhotoThumbnails(trip) {
 }
 
 // ============================================================================
-// 11. DOMContentLoaded 이후 모든 이벤트 리스너 & 위임 바인딩 (버튼 먹통 원천 차단)
+// [9. 모달 오픈 헬퍼 함수들 (이벤트 위임에서 직접 호출)]
 // ============================================================================
-let editingScheduleId = null;
-let editingBookingId = null;
-let editingExpenseId = null;
-let editingReviewId = null;
-let editingReviewTripId = null;
-let currentReviewPriceMemo = '';
+function openNewTripModal() {
+  const today = new Date().toISOString().split('T')[0];
+  if ($('inputNewTripTitle')) $('inputNewTripTitle').value = '';
+  if ($('inputNewTripDestination')) $('inputNewTripDestination').value = '';
+  if ($('inputNewTripStartDate')) $('inputNewTripStartDate').value = today;
+  if ($('inputNewTripEndDate')) $('inputNewTripEndDate').value = today;
+  if ($('selectNewTripCurrency')) $('selectNewTripCurrency').value = 'KRW';
+  if ($('inputNewTripMyBudget')) $('inputNewTripMyBudget').value = '1500000';
+  if ($('inputNewTripMembers')) $('inputNewTripMembers').value = '나, 동행1';
+  openModalSafe('modalNewTrip');
+}
 
-document.addEventListener('DOMContentLoaded', () => {
-  try {
-    registerServiceWorkerSafe();
-    enhanceModalsOnStartup();
-    loadLocalData();
-    const cloudOk = initFirebaseSafely();
-    renderHomeView();
-    if (cloudOk) {
-      startFirestoreRealtimeSync();
+function openAddScheduleModal() {
+  const trip = getActiveTrip();
+  if (!trip) return;
+  editingScheduleId = null;
+  if ($('modalScheduleHeading')) $('modalScheduleHeading').textContent = '일정 추가';
+  populateAllDaySelectors(trip);
+  if ($('selectModalScheduleDay')) $('selectModalScheduleDay').value = $('selectItineraryDay')?.value || '1';
+  if ($('inputModalScheduleTime')) $('inputModalScheduleTime').value = '10:00';
+  if ($('inputModalSchedulePlace')) $('inputModalSchedulePlace').value = '';
+  if ($('inputModalScheduleMemo')) $('inputModalScheduleMemo').value = '';
+  openModalSafe('modalAddSchedule');
+}
+
+function openAddBookingModal() {
+  const trip = getActiveTrip();
+  if (!trip) return;
+  editingBookingId = null;
+  if ($('modalBookingHeading')) $('modalBookingHeading').textContent = '예약 내역 등록';
+
+  const priv = getMyPrivateInfo(trip);
+  const members = trip.members || [priv.myNickname];
+
+  if ($('selectBookingCategory')) $('selectBookingCategory').value = '항공';
+  if ($('inputBookingDate')) $('inputBookingDate').value = trip.startDate || '';
+  if ($('inputBookingTitle')) $('inputBookingTitle').value = '';
+  if ($('inputBookingFlightLookupCode')) $('inputBookingFlightLookupCode').value = '';
+  if ($('inputBookingTime')) $('inputBookingTime').value = '10:00';
+  if ($('inputBookingCode')) $('inputBookingCode').value = '';
+  if ($('inputBookingMemo')) $('inputBookingMemo').value = '';
+  if ($('selectBookingCurrency')) $('selectBookingCurrency').value = trip.baseCurrency || 'KRW';
+  if ($('inputBookingAmount')) $('inputBookingAmount').value = '';
+  if ($('chkBookingAutoSync')) $('chkBookingAutoSync').checked = true;
+
+  if ($('selectBookingPayer')) {
+    $('selectBookingPayer').innerHTML = members
+      .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+      .join('');
+    $('selectBookingPayer').value = priv.myNickname;
+  }
+  if ($('bookingParticipantsGroup')) {
+    $('bookingParticipantsGroup').innerHTML = members
+      .map(
+        (m) => `
+        <label class="inline-flex items-center gap-1 text-xs bg-white border border-slate-200 px-2 py-1 rounded-lg">
+          <input type="checkbox" value="${escapeHtml(m)}" checked class="bk-part-chk" />
+          <span>${escapeHtml(m)}</span>
+        </label>
+      `
+      )
+      .join('');
+  }
+  openModalSafe('modalAddBooking');
+}
+
+function openAddExpenseModal() {
+  const trip = getActiveTrip();
+  if (!trip) return;
+  editingExpenseId = null;
+  if ($('modalExpenseHeading')) $('modalExpenseHeading').textContent = '지출 내역 추가';
+
+  const priv = getMyPrivateInfo(trip);
+  const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : [priv.myNickname];
+
+  if ($('inputExpTitle')) $('inputExpTitle').value = '';
+  if ($('selectExpCurrency')) $('selectExpCurrency').value = 'KRW';
+  if ($('inputExpAmount')) $('inputExpAmount').value = '';
+  if ($('inputExpAppliedRate')) $('inputExpAppliedRate').value = '1';
+  if ($('expRateStatusText')) $('expRateStatusText').textContent = '적용 환율 (1 KRW = 1 KRW)';
+  if ($('expRateUnitPrefix')) $('expRateUnitPrefix').textContent = '1 KRW =';
+  if ($('expConvertedKrwPreview')) $('expConvertedKrwPreview').textContent = '0 KRW';
+
+  const payerSel = $('selectExpPayer');
+  if (payerSel) {
+    payerSel.innerHTML = members
+      .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+      .join('');
+    if (members.includes(priv.myNickname)) {
+      payerSel.value = priv.myNickname;
     }
-  } catch (err) {
-    console.error('초기화 예외:', err);
   }
 
+  const groupEl = $('expParticipantsCheckboxGroup');
+  if (groupEl) {
+    groupEl.innerHTML = members
+      .map(
+        (m) => `
+        <label class="flex items-center gap-2.5 py-1 text-xs font-semibold text-slate-700 cursor-pointer">
+          <input type="checkbox" value="${escapeHtml(m)}" checked class="exp-participant-chk w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
+          <span>${escapeHtml(m)}</span>
+        </label>
+      `
+      )
+      .join('');
+  }
+
+  openModalSafe('modalAddExpense');
+}
+
+function openAddPhotoModal() {
+  const trip = getActiveTrip();
+  if (!trip) return;
+  populateAllDaySelectors(trip);
+  if ($('inputPhotoFile')) $('inputPhotoFile').value = '';
+  $('photoPreviewWrapper')?.classList.add('hidden');
+  if ($('imgPhotoUploadPreview')) $('imgPhotoUploadPreview').src = '';
+  if ($('selectPhotoCategory')) $('selectPhotoCategory').value = '관광지';
+  if ($('inputPhotoDate')) $('inputPhotoDate').value = trip.startDate || new Date().toISOString().split('T')[0];
+  if ($('inputPhotoPlace')) $('inputPhotoPlace').value = '';
+  if ($('inputPhotoMemo')) $('inputPhotoMemo').value = '';
+  openModalSafe('modalAddPhoto');
+}
+
+function openAddReviewModal() {
+  const trip = getActiveTrip();
+  if (!trip) return;
+  editingReviewId = null;
+  editingReviewTripId = trip.id;
+  currentReviewPriceMemo = '';
+  selectedReviewPhotoIds = [];
+  if ($('modalReviewHeading')) $('modalReviewHeading').textContent = '방문 장소 리뷰 작성';
+
+  populateAllDaySelectors(trip);
+
+  const bkSelect = $('selectReviewFromBooking');
+  if (bkSelect) {
+    bkSelect.innerHTML = '<option value="">직접 입력 (또는 예약 내역 선택)</option>';
+    (trip.bookings || []).forEach((b) => {
+      const opt = document.createElement('option');
+      opt.value = b.id;
+      const costStr = Number(b.amount) > 0 ? ` · ${Number(b.amount).toLocaleString()} ${b.currency}` : '';
+      opt.textContent = `[${b.category}] ${b.title}${costStr}`;
+      bkSelect.appendChild(opt);
+    });
+  }
+
+  if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = '';
+  if ($('selectReviewCategory')) $('selectReviewCategory').value = '맛집/카페';
+  if ($('selectReviewDay')) $('selectReviewDay').value = '1';
+  setReviewStarRating(5);
+  if ($('chkReviewRevisit')) $('chkReviewRevisit').checked = true;
+  if ($('inputReviewContent')) $('inputReviewContent').value = '';
+
+  renderReviewPhotoThumbnails(trip);
+  openModalSafe('modalAddReview');
+}
+
+// ============================================================================
+// [10. 앱 초기화 및 document.body 이벤트 위임 (모듈 실행 시점 보장)]
+// ============================================================================
+let isAppInitialized = false;
+
+function initApp() {
+  if (isAppInitialized) return;
+  isAppInitialized = true;
+
+  // 1) 로컬 데이터 먼저 로드 및 초기 홈 화면 렌더링
+  try {
+    loadLocalData();
+    renderHomeView();
+  } catch (err) {
+    console.error('로컬 초기 렌더링 예외:', err);
+  }
+
+  // 2) UI 이벤트(document.body 이벤트 위임 및 폼 submit)를 Firebase보다 먼저 바인딩하여 버튼 작동 100% 보장
+  bindAllUiEvents();
+
+  // 3) Service Worker 및 Firebase 실시간 동기화 시작
+  try {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js').catch(() => {});
+    }
+    const cloudReady = initFirebaseSafely();
+    if (cloudReady) {
+      startFirestoreRealtimeSync();
+    }
+    refreshMajorRates(['JPY', 'USD', 'EUR']).then(({ rates }) => {
+      if ($('headerRateTimestamp')) {
+        $('headerRateTimestamp').textContent = `100엔=${Math.round((rates.JPY || 9.15) * 100)}원 · 1달러=${Math.round(rates.USD || 1380)}원`;
+      }
+    });
+  } catch (err) {
+    console.warn('네트워크/클라우드 초기화 경고:', err);
+  }
+}
+
+function bindAllUiEvents() {
   // --------------------------------------------------------------------------
-  // [A] 전역 이벤트 위임 (모달 닫기, 6개 메인 탭, 필터, 전 항목 수정/삭제)
+  // [A] document.body 클릭 이벤트 위임 (모든 버튼, 탭, 필터, 모달 열기/닫기 통합 제어)
   // --------------------------------------------------------------------------
-  document.addEventListener('click', async (e) => {
+  document.body.addEventListener('click', async (e) => {
     try {
-      // 1) 모든 모달 닫기 ([data-close-modal])
+      // 1. 모달 닫기 버튼 ([data-close-modal])
       const closeBtn = e.target.closest('[data-close-modal]');
       if (closeBtn) {
         closeModalSafe(closeBtn.getAttribute('data-close-modal'));
         return;
       }
 
-      // 2) 하단 6개 메인 탭 전환 ([data-main-tab])
+      // 2. 하단 6개 메인 탭 전환 ([data-main-tab])
       const mainTabBtn = e.target.closest('[data-main-tab]');
       if (mainTabBtn) {
         switchMainTab(mainTabBtn.getAttribute('data-main-tab'));
         return;
       }
 
-      // 3) 예약 카테고리 필터 칩
+      // 3. 예약 카테고리 필터 ([data-booking-filter])
       const bkChip = e.target.closest('[data-booking-filter]');
       if (bkChip) {
         currentBookingFilter = bkChip.getAttribute('data-booking-filter') || '전체';
@@ -1797,14 +1644,14 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      // 4) 사진 카테고리 필터 칩
+      // 4. 사진 카테고리 필터 ([data-photo-cat])
       const phChip = e.target.closest('[data-photo-cat]');
       if (phChip) {
         currentPhotoFilter = phChip.getAttribute('data-photo-cat') || '전체';
         document.querySelectorAll('.photo-cat-chip').forEach((c) => {
           const on = c.getAttribute('data-photo-cat') === currentPhotoFilter;
           c.className = on
-            ? 'photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-slate-800 text-white'
+            ? 'photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-extrabold bg-slate-800 text-white'
             : 'photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600';
         });
         const trip = getActiveTrip();
@@ -1812,7 +1659,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      // 5) 리뷰 카테고리 필터 칩
+      // 5. 리뷰 카테고리 필터 ([data-review-filter])
       const rvChip = e.target.closest('[data-review-filter]');
       if (rvChip) {
         currentReviewFilter = rvChip.getAttribute('data-review-filter') || '전체';
@@ -1827,14 +1674,14 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      // 6) 리뷰 별점 선택
+      // 6. 리뷰 별점 버튼 ([data-star-val])
       const starBtn = e.target.closest('[data-star-val]');
       if (starBtn) {
         setReviewStarRating(starBtn.getAttribute('data-star-val'));
         return;
       }
 
-      // 7) 체크리스트 vs 쇼핑리스트 서브탭 전환
+      // 7. 체크리스트/쇼핑 서브탭 ([data-checklist-mode])
       const clModeBtn = e.target.closest('[data-checklist-mode]');
       if (clModeBtn) {
         currentChecklistSubTab = clModeBtn.getAttribute('data-checklist-mode') || 'packing';
@@ -1856,7 +1703,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
 
-      // 8) 동적 생성 요소의 [data-action] 처리
+      // 8. 모든 [data-action] 버튼 및 카드 액션 처리
       const actionEl = e.target.closest('[data-action]');
       if (!actionEl) return;
 
@@ -1864,237 +1711,561 @@ document.addEventListener('DOMContentLoaded', () => {
       const id = actionEl.getAttribute('data-id');
       const tripId = actionEl.getAttribute('data-trip-id');
 
-      if (action === 'open-trip' && tripId) {
-        enterTripDetail(tripId);
-      } else if (action === 'delete-trip' && tripId) {
-        e.stopPropagation();
-        const target = trips.find((t) => t.id === tripId);
-        if (target && confirm(`'${target.title}' 여행을 삭제하시겠습니까?`)) {
-          trips = trips.filter((t) => t.id !== tripId);
-          delete privateBudgets[tripId];
-          saveLocalData();
-          if (isCloudOnline && db) {
-            deleteDoc(doc(db, 'trips', tripId)).catch((err) => console.warn(err));
-          }
-          renderHomeView();
-        }
-      } else if (action === 'edit-itinerary' && id) {
-        const trip = getActiveTrip();
-        const item = trip?.itineraries?.find((s) => s.id === id);
-        if (item) {
-          editingScheduleId = item.id;
-          populateAllDaySelectors(trip);
-          if ($('selectModalScheduleDay')) $('selectModalScheduleDay').value = String(item.day || 1);
-          if ($('inputModalScheduleTime')) $('inputModalScheduleTime').value = item.time || '10:00';
-          if ($('inputModalSchedulePlace')) $('inputModalSchedulePlace').value = item.place || '';
-          if ($('inputModalScheduleMemo')) $('inputModalScheduleMemo').value = item.memo || '';
-          openModalSafe('modalAddSchedule');
-        }
-      } else if (action === 'delete-itinerary' && id) {
-        const trip = getActiveTrip();
-        if (trip && confirm('이 일정을 삭제하시겠습니까?')) {
-          trip.itineraries = (trip.itineraries || []).filter((s) => s.id !== id);
-          saveLocalData();
-          syncTripToFirestore(trip);
-          renderItineraryTab(trip);
-        }
-      } else if (action === 'edit-booking' && id) {
-        const trip = getActiveTrip();
-        const bk = trip?.bookings?.find((b) => b.id === id);
-        if (bk) {
-          editingBookingId = bk.id;
-          const priv = getMyPrivateInfo(trip);
-          const members = trip.members || [priv.myNickname];
+      switch (action) {
+        case 'open-new-trip-modal':
+          openNewTripModal();
+          break;
 
-          if ($('selectBookingCategory')) $('selectBookingCategory').value = bk.category || '항공';
-          if ($('inputBookingDate')) $('inputBookingDate').value = bk.date || '';
-          if ($('inputBookingTitle')) $('inputBookingTitle').value = bk.title || '';
-          if ($('inputBookingTime')) $('inputBookingTime').value = bk.time || '';
-          if ($('inputBookingCode')) $('inputBookingCode').value = bk.code || '';
-          if ($('inputBookingMemo')) $('inputBookingMemo').value = bk.memo || '';
-          if ($('selectBookingCurrency')) $('selectBookingCurrency').value = bk.currency || 'KRW';
-          if ($('inputBookingAmount')) $('inputBookingAmount').value = bk.amount || '';
-          if ($('chkBookingAutoSync')) $('chkBookingAutoSync').checked = bk.autoSync !== false;
+        case 'back-to-home':
+          exitTripDetailToHome();
+          break;
 
-          if ($('selectBookingPayer')) {
-            $('selectBookingPayer').innerHTML = members
-              .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
-              .join('');
-            $('selectBookingPayer').value = bk.payer || priv.myNickname;
+        case 'copy-invite-code': {
+          const trip = getActiveTrip();
+          if (trip) {
+            shareOrCopyText(
+              trip.title,
+              `[${trip.title}] 여행에 초대합니다!\n초대 코드: ${trip.inviteCode}`,
+              `초대 코드 [${trip.inviteCode}]가 클립보드에 복사되었습니다!`
+            );
           }
-          if ($('bookingParticipantsGroup')) {
-            const activeParts = Array.isArray(bk.participants) ? bk.participants : members;
-            $('bookingParticipantsGroup').innerHTML = members
-              .map(
-                (m) => `
-                <label class="inline-flex items-center gap-1 text-xs bg-white border border-slate-200 px-2 py-1 rounded-lg">
-                  <input type="checkbox" value="${escapeHtml(m)}" ${activeParts.includes(m) ? 'checked' : ''} class="bk-part-chk" />
-                  <span>${escapeHtml(m)}</span>
-                </label>
-              `
-              )
-              .join('');
-          }
-          openModalSafe('modalAddBooking');
+          break;
         }
-      } else if (action === 'delete-booking' && id) {
-        const trip = getActiveTrip();
-        if (trip && confirm('이 예약을 삭제하시겠습니까? (연동된 일정 및 지출 내역도 함께 정리됩니다)')) {
-          trip.bookings = (trip.bookings || []).filter((b) => b.id !== id);
-          trip.itineraries = (trip.itineraries || []).filter((s) => s.bookingId !== id);
-          trip.expenses = (trip.expenses || []).filter((ex) => ex.bookingId !== id);
-          saveLocalData();
-          syncTripToFirestore(trip);
-          renderDetailView();
-        }
-      } else if (action === 'edit-expense' && id) {
-        const trip = getActiveTrip();
-        const exp = trip?.expenses?.find((ex) => ex.id === id);
-        if (exp) {
-          editingExpenseId = exp.id;
-          const priv = getMyPrivateInfo(trip);
-          const members = trip.members || [priv.myNickname];
 
-          if ($('inputExpTitle')) $('inputExpTitle').value = exp.title || '';
-          if ($('selectExpCurrency')) $('selectExpCurrency').value = exp.currency || 'KRW';
-          if ($('inputExpAmount')) $('inputExpAmount').value = exp.amount || '';
-          if ($('inputExpAppliedRate')) $('inputExpAppliedRate').value = exp.rateToKrw || 1;
-          updateExpenseModalRatePreview();
+        case 'refresh-all-rates': {
+          if ($('headerRateTimestamp')) $('headerRateTimestamp').textContent = '환율 갱신 중...';
+          const [jpy, usd, eur] = await Promise.all([
+            fetchLiveExchangeRate('JPY'),
+            fetchLiveExchangeRate('USD'),
+            fetchLiveExchangeRate('EUR')
+          ]);
+          if ($('headerRateTimestamp')) {
+            $('headerRateTimestamp').textContent = `100엔=${Math.round(jpy.ratePer100)}원 · 1달러=${Math.round(usd.rate)}원`;
+          }
+          alert(
+            `실시간 원화(KRW) 환율이 갱신되었습니다.\n` +
+            `• ${jpy.displayUnit}\n` +
+            `• ${usd.displayUnit}\n` +
+            `• ${eur.displayUnit}`
+          );
+          break;
+        }
 
-          if ($('selectExpPayer')) {
-            $('selectExpPayer').innerHTML = members
-              .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
-              .join('');
-            $('selectExpPayer').value = exp.payer || priv.myNickname;
+        case 'open-add-schedule-modal':
+          openAddScheduleModal();
+          break;
+
+        case 'open-add-booking-modal':
+          openAddBookingModal();
+          break;
+
+        case 'open-add-expense-modal':
+          openAddExpenseModal();
+          break;
+
+        case 'open-add-photo-modal':
+          openAddPhotoModal();
+          break;
+
+        case 'open-add-review-modal':
+          openAddReviewModal();
+          break;
+
+        case 'toggle-budget-form': {
+          const trip = getActiveTrip();
+          const form = $('formUpdatePrivateBudget');
+          if (trip && form) {
+            const priv = getMyPrivateInfo(trip);
+            if ($('inputPrivateBudgetValue')) $('inputPrivateBudgetValue').value = String(priv.myBudget);
+            form.classList.toggle('hidden');
           }
-          if ($('expParticipantsCheckboxGroup')) {
-            const activeParts = Array.isArray(exp.participants) ? exp.participants : members;
-            $('expParticipantsCheckboxGroup').innerHTML = members
-              .map(
-                (m) => `
-                <label class="flex items-center gap-2.5 py-1 text-xs font-semibold text-slate-700 cursor-pointer">
-                  <input type="checkbox" value="${escapeHtml(m)}" ${activeParts.includes(m) ? 'checked' : ''} class="exp-participant-chk w-4 h-4 rounded border-slate-300 text-sky-600" />
-                  <span>${escapeHtml(m)}</span>
-                </label>
-              `
-              )
-              .join('');
+          break;
+        }
+
+        case 'fetch-expense-rate':
+          await syncExpenseModalRateFromApi();
+          break;
+
+        case 'lookup-flight': {
+          const code = ($('inputBookingFlightLookupCode')?.value || '').replace(/\s+/g, '').toUpperCase();
+          if (!code) {
+            alert('조회할 항공편명을 입력해주세요. (예: RS471, KE703)');
+            return;
           }
-          openModalSafe('modalAddExpense');
-        }
-      } else if (action === 'delete-expense' && id) {
-        const trip = getActiveTrip();
-        if (trip && confirm('이 지출 내역을 삭제하시겠습니까?')) {
-          trip.expenses = (trip.expenses || []).filter((ex) => ex.id !== id);
-          saveLocalData();
-          syncTripToFirestore(trip);
-          renderExpensesTab(trip);
-        }
-      } else if (action === 'view-photo' && id) {
-        const trip = getActiveTrip();
-        const photo = trip?.photos?.find((p) => p.id === id);
-        if (photo) {
-          viewingPhotoId = photo.id;
-          if ($('viewPhotoDayAndDate')) $('viewPhotoDayAndDate').textContent = `Day ${photo.day} · ${photo.category || '기타'} ${photo.date ? `(${photo.date})` : ''}`;
-          if ($('viewPhotoPlaceTitle')) $('viewPhotoPlaceTitle').textContent = photo.place || '장소 기록';
-          if ($('viewPhotoFullImg')) $('viewPhotoFullImg').src = photo.dataUrl;
-          if ($('viewPhotoMemoText')) $('viewPhotoMemoText').textContent = photo.memo || '등록된 메모가 없습니다.';
-          openModalSafe('modalViewPhoto');
-        }
-      } else if (action === 'toggle-review-photo' && id) {
-        const trip = getActiveTrip();
-        if (!trip) return;
-        if (selectedReviewPhotoIds.includes(id)) {
-          selectedReviewPhotoIds = selectedReviewPhotoIds.filter((pid) => pid !== id);
-        } else {
-          selectedReviewPhotoIds.push(id);
-        }
-        renderReviewPhotoThumbnails(trip);
-      } else if (action === 'edit-review' && id) {
-        const trip = getActiveTrip();
-        const rv = trip?.reviews?.find((r) => r.id === id);
-        if (rv) {
-          editingReviewId = rv.id;
-          editingReviewTripId = trip.id;
-          currentReviewPriceMemo = rv.priceMemo || '';
-          populateAllDaySelectors(trip);
-          if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = rv.place || '';
-          if ($('selectReviewCategory')) $('selectReviewCategory').value = rv.category || '맛집/카페';
-          if ($('selectReviewDay')) $('selectReviewDay').value = String(rv.day || 1);
-          setReviewStarRating(rv.rating || 5);
-          if ($('chkReviewRevisit')) $('chkReviewRevisit').checked = Boolean(rv.revisit);
-          if ($('inputReviewContent')) $('inputReviewContent').value = rv.content || '';
-          selectedReviewPhotoIds = Array.isArray(rv.photoIds) ? [...rv.photoIds] : [];
-          renderReviewPhotoThumbnails(trip);
-          openModalSafe('modalAddReview');
-        }
-      } else if (action === 'edit-global-review' && tripId && id) {
-        const targetTrip = trips.find((t) => t.id === tripId);
-        const rv = targetTrip?.reviews?.find((r) => r.id === id);
-        if (targetTrip && rv) {
-          editingReviewId = rv.id;
-          editingReviewTripId = targetTrip.id;
-          currentReviewPriceMemo = rv.priceMemo || '';
-          populateAllDaySelectors(targetTrip);
-          if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = rv.place || '';
-          if ($('selectReviewCategory')) $('selectReviewCategory').value = rv.category || '맛집/카페';
-          if ($('selectReviewDay')) $('selectReviewDay').value = String(rv.day || 1);
-          setReviewStarRating(rv.rating || 5);
-          if ($('chkReviewRevisit')) $('chkReviewRevisit').checked = Boolean(rv.revisit);
-          if ($('inputReviewContent')) $('inputReviewContent').value = rv.content || '';
-          selectedReviewPhotoIds = Array.isArray(rv.photoIds) ? [...rv.photoIds] : [];
-          renderReviewPhotoThumbnails(targetTrip);
-          openModalSafe('modalAddReview');
-        }
-      } else if (action === 'delete-review' && id) {
-        const trip = getActiveTrip();
-        if (trip && confirm('이 리뷰를 삭제하시겠습니까?')) {
-          trip.reviews = (trip.reviews || []).filter((r) => r.id !== id);
-          saveLocalData();
-          syncTripToFirestore(trip);
-          await deleteReviewFromGlobalCollection(id);
-          renderReviewsTab(trip);
-        }
-      } else if (action === 'edit-cl-item' && id) {
-        const trip = getActiveTrip();
-        if (!trip) return;
-        const targetArr = currentChecklistSubTab === 'shopping' ? trip.shoppingList : trip.packingList;
-        const item = (targetArr || []).find((c) => c.id === id);
-        if (item) {
-          const newText = prompt('항목명을 수정하세요:', item.text);
-          if (newText !== null && newText.trim() !== '') {
-            item.text = newText.trim();
-            if (currentChecklistSubTab === 'shopping') {
-              const newPrice = prompt('예상 가격을 수정하세요 (숫자):', String(item.expectedPrice || 0));
-              if (newPrice !== null) item.expectedPrice = Number(newPrice) || 0;
+          actionEl.disabled = true;
+          actionEl.textContent = '조회 중...';
+          try {
+            const info = await lookupFlightWithSharedCache(code);
+            if (info) {
+              const routePart = info.dep && info.arr ? ` (${info.dep} ➔ ${info.arr})` : '';
+              if ($('inputBookingTitle')) {
+                $('inputBookingTitle').value = `${info.airline} ${info.flightNo}${routePart}`.trim();
+              }
+              if (info.depTime && $('inputBookingTime')) {
+                $('inputBookingTime').value = info.depTime;
+              }
+              if (info.memo && $('inputBookingMemo') && !$('inputBookingMemo').value.trim()) {
+                $('inputBookingMemo').value = info.memo;
+              }
+              alert(`[${info.airline} ${info.flightNo}] 정보가 입력되었습니다. (${info.fromCache ? '공용 캐시' : '실시간 API'})`);
+            } else {
+              alert('해당 편명의 운항 정보를 찾지 못했습니다. 직접 입력해주세요.');
             }
+          } finally {
+            actionEl.disabled = false;
+            actionEl.textContent = '편명 자동조회 ✈️';
+          }
+          break;
+        }
+
+        case 'toggle-ai-planner':
+          $('aiPlannerBox')?.classList.toggle('hidden');
+          break;
+
+        case 'close-ai-planner':
+          $('aiPlannerBox')?.classList.add('hidden');
+          break;
+
+        case 'generate-ai-schedule': {
+          const trip = getActiveTrip();
+          if (!trip) return;
+          const concept = ($('inputAiConcept')?.value || '').trim() || '현지 핵심 명소 및 미식 탐방';
+          const budgetMan = Number($('inputAiTargetBudget')?.value) || 100;
+          const totalDays = calculateTripDays(trip);
+
+          const suggestions = [];
+          for (let d = 1; d <= totalDays; d++) {
+            const existingTimes = new Set(
+              (trip.itineraries || []).filter((s) => Number(s.day) === d).map((s) => s.time)
+            );
+            if (!existingTimes.has('10:30')) {
+              suggestions.push({
+                day: d,
+                time: '10:30',
+                place: `${trip.destination} 대표 명소 투어 (Day ${d})`,
+                memo: `컨셉: ${concept} · 오전 추천 동선`
+              });
+            }
+            if (!existingTimes.has('12:30')) {
+              suggestions.push({
+                day: d,
+                time: '12:30',
+                place: `${trip.destination} 현지 로컬 맛집 런치`,
+                memo: `예산 약 ${Math.round(budgetMan / totalDays)}만원/일 기준 추천`
+              });
+            }
+            if (!existingTimes.has('15:30')) {
+              suggestions.push({
+                day: d,
+                time: '15:30',
+                place: `${trip.destination} 전망 카페 & 힐링 스폿`,
+                memo: `${concept} 맞춤 오후 코스`
+              });
+            }
+          }
+
+          aiGeneratedSuggestions = suggestions;
+          const listEl = $('aiSuggestionItemsList');
+          if (listEl) {
+            listEl.innerHTML = suggestions
+              .map(
+                (s) =>
+                  `<div class="bg-white px-2.5 py-1.5 rounded-lg border border-indigo-100">
+                    <strong>[Day ${s.day} ${s.time}]</strong> ${escapeHtml(s.place)}
+                    <span class="block text-[10px] text-slate-400">${escapeHtml(s.memo)}</span>
+                  </div>`
+              )
+              .join('');
+          }
+          $('aiSuggestionResultArea')?.classList.remove('hidden');
+          break;
+        }
+
+        case 'apply-ai-schedules': {
+          const trip = getActiveTrip();
+          if (!trip || aiGeneratedSuggestions.length === 0) return;
+          aiGeneratedSuggestions.forEach((s, idx) => {
+            trip.itineraries.push({
+              id: 'it_ai_' + Date.now() + '_' + idx,
+              day: s.day,
+              time: s.time,
+              place: s.place,
+              memo: s.memo
+            });
+          });
+          const count = aiGeneratedSuggestions.length;
+          aiGeneratedSuggestions = [];
+          $('aiSuggestionResultArea')?.classList.add('hidden');
+          $('aiPlannerBox')?.classList.add('hidden');
+          saveLocalData();
+          renderItineraryTab(trip);
+          await syncTripToFirestore(trip);
+          alert(`AI 추천 일정 ${count}건이 내 일정표에 일괄 등록되었습니다!`);
+          break;
+        }
+
+        case 'share-itinerary-text': {
+          const trip = getActiveTrip();
+          if (!trip) return;
+          const selectedDay = Number($('selectItineraryDay')?.value) || 1;
+          const dateStr = getDateForTripDay(trip, selectedDay);
+          const dayItems = (trip.itineraries || [])
+            .filter((s) => Number(s.day) === selectedDay)
+            .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+
+          const lines = [
+            `✈️ [${trip.title}] Day ${selectedDay} 일정 (${dateStr})`,
+            `━━━━━━━━━━━━━━━━━━`,
+            ...(dayItems.length === 0
+              ? ['• 등록된 일정이 없습니다.']
+              : dayItems.map((s) => `⏰ ${s.time} | ${s.place}${s.memo ? `\n   └ ${s.memo}` : ''}`))
+          ];
+          shareOrCopyText(`${trip.title} 일정`, lines.join('\n'), '일정 요약이 복사되었습니다!');
+          break;
+        }
+
+        case 'share-settlement-summary': {
+          const trip = getActiveTrip();
+          if (!trip) return;
+          const priv = getMyPrivateInfo(trip);
+          const { groupTotalKrw, transfers } = calculateOneOverNSettlement(
+            trip.expenses || [],
+            trip.members || [priv.myNickname],
+            priv.myNickname
+          );
+          const lines = [
+            `💸 [${trip.title}] 1/N 정산 요약`,
+            `━━━━━━━━━━━━━━━━━━`,
+            `• 총 공용 지출: ${Math.round(groupTotalKrw).toLocaleString()}원`,
+            ...(transfers.length === 0
+              ? ['• 정산할 송금 내역이 없습니다.']
+              : transfers.map((t) => `• ${t.from} ➔ ${t.to} : ${Math.round(t.amount).toLocaleString()}원 송금`))
+          ];
+          shareOrCopyText(`${trip.title} 정산`, lines.join('\n'), '1/N 정산 내역이 복사되었습니다!');
+          break;
+        }
+
+        case 'export-json': {
+          const exportObj = {
+            app: 'Travel Journal',
+            version: 5,
+            exportedAt: new Date().toISOString(),
+            trips,
+            allReviews,
+            privateBudgets
+          };
+          const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `travel-journal-backup-${new Date().toISOString().split('T')[0]}.json`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+          break;
+        }
+
+        case 'trigger-import-json':
+          $('inputImportJsonFile')?.click();
+          break;
+
+        case 'print-report':
+          window.print();
+          break;
+
+        case 'open-trip':
+          if (tripId) enterTripDetail(tripId);
+          break;
+
+        case 'delete-trip': {
+          e.stopPropagation();
+          const target = trips.find((t) => t.id === tripId);
+          if (target && confirm(`'${target.title}' 여행을 삭제하시겠습니까?`)) {
+            trips = trips.filter((t) => t.id !== tripId);
+            delete privateBudgets[tripId];
+            saveLocalData();
+            if (isCloudOnline && db) {
+              deleteDoc(doc(db, 'trips', tripId)).catch(() => {});
+            }
+            renderHomeView();
+          }
+          break;
+        }
+
+        case 'edit-itinerary': {
+          const trip = getActiveTrip();
+          const item = trip?.itineraries?.find((s) => s.id === id);
+          if (item) {
+            editingScheduleId = item.id;
+            if ($('modalScheduleHeading')) $('modalScheduleHeading').textContent = '일정 수정';
+            populateAllDaySelectors(trip);
+            if ($('selectModalScheduleDay')) $('selectModalScheduleDay').value = String(item.day || 1);
+            if ($('inputModalScheduleTime')) $('inputModalScheduleTime').value = item.time || '10:00';
+            if ($('inputModalSchedulePlace')) $('inputModalSchedulePlace').value = item.place || '';
+            if ($('inputModalScheduleMemo')) $('inputModalScheduleMemo').value = item.memo || '';
+            openModalSafe('modalAddSchedule');
+          }
+          break;
+        }
+
+        case 'delete-itinerary': {
+          const trip = getActiveTrip();
+          if (trip && confirm('이 일정을 삭제하시겠습니까?')) {
+            trip.itineraries = (trip.itineraries || []).filter((s) => s.id !== id);
             saveLocalData();
             syncTripToFirestore(trip);
-            renderChecklistTab(trip);
+            renderItineraryTab(trip);
           }
+          break;
         }
-      } else if (action === 'delete-cl-item' && id) {
-        const trip = getActiveTrip();
-        if (!trip) return;
-        if (currentChecklistSubTab === 'shopping') {
-          trip.shoppingList = (trip.shoppingList || []).filter((c) => c.id !== id);
-        } else {
-          trip.packingList = (trip.packingList || []).filter((c) => c.id !== id);
+
+        case 'edit-booking': {
+          const trip = getActiveTrip();
+          const bk = trip?.bookings?.find((b) => b.id === id);
+          if (bk) {
+            editingBookingId = bk.id;
+            if ($('modalBookingHeading')) $('modalBookingHeading').textContent = '예약 내역 수정';
+            const priv = getMyPrivateInfo(trip);
+            const members = trip.members || [priv.myNickname];
+
+            if ($('selectBookingCategory')) $('selectBookingCategory').value = bk.category || '항공';
+            if ($('inputBookingDate')) $('inputBookingDate').value = bk.date || '';
+            if ($('inputBookingTitle')) $('inputBookingTitle').value = bk.title || '';
+            if ($('inputBookingTime')) $('inputBookingTime').value = bk.time || '';
+            if ($('inputBookingCode')) $('inputBookingCode').value = bk.code || '';
+            if ($('inputBookingMemo')) $('inputBookingMemo').value = bk.memo || '';
+            if ($('selectBookingCurrency')) $('selectBookingCurrency').value = bk.currency || 'KRW';
+            if ($('inputBookingAmount')) $('inputBookingAmount').value = bk.amount || '';
+            if ($('chkBookingAutoSync')) $('chkBookingAutoSync').checked = bk.autoSync !== false;
+
+            if ($('selectBookingPayer')) {
+              $('selectBookingPayer').innerHTML = members
+                .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+                .join('');
+              $('selectBookingPayer').value = bk.payer || priv.myNickname;
+            }
+            if ($('bookingParticipantsGroup')) {
+              const activeParts = Array.isArray(bk.participants) ? bk.participants : members;
+              $('bookingParticipantsGroup').innerHTML = members
+                .map(
+                  (m) => `
+                  <label class="inline-flex items-center gap-1 text-xs bg-white border border-slate-200 px-2 py-1 rounded-lg">
+                    <input type="checkbox" value="${escapeHtml(m)}" ${activeParts.includes(m) ? 'checked' : ''} class="bk-part-chk" />
+                    <span>${escapeHtml(m)}</span>
+                  </label>
+                `
+                )
+                .join('');
+            }
+            openModalSafe('modalAddBooking');
+          }
+          break;
         }
-        saveLocalData();
-        syncTripToFirestore(trip);
-        renderChecklistTab(trip);
+
+        case 'delete-booking': {
+          const trip = getActiveTrip();
+          if (trip && confirm('이 예약을 삭제하시겠습니까? (연동된 일정 및 지출도 함께 삭제됩니다)')) {
+            trip.bookings = (trip.bookings || []).filter((b) => b.id !== id);
+            trip.itineraries = (trip.itineraries || []).filter((s) => s.bookingId !== id);
+            trip.expenses = (trip.expenses || []).filter((ex) => ex.bookingId !== id);
+            saveLocalData();
+            syncTripToFirestore(trip);
+            renderDetailView();
+          }
+          break;
+        }
+
+        case 'edit-expense': {
+          const trip = getActiveTrip();
+          const exp = trip?.expenses?.find((ex) => ex.id === id);
+          if (exp) {
+            editingExpenseId = exp.id;
+            if ($('modalExpenseHeading')) $('modalExpenseHeading').textContent = '지출 내역 수정';
+            const priv = getMyPrivateInfo(trip);
+            const members = trip.members || [priv.myNickname];
+
+            if ($('inputExpTitle')) $('inputExpTitle').value = exp.title || '';
+            if ($('selectExpCurrency')) $('selectExpCurrency').value = exp.currency || 'KRW';
+            if ($('inputExpAmount')) $('inputExpAmount').value = exp.amount || '';
+            if ($('inputExpAppliedRate')) $('inputExpAppliedRate').value = exp.rateToKrw || 1;
+            updateExpenseModalRatePreview();
+
+            if ($('selectExpPayer')) {
+              $('selectExpPayer').innerHTML = members
+                .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+                .join('');
+              $('selectExpPayer').value = exp.payer || priv.myNickname;
+            }
+            if ($('expParticipantsCheckboxGroup')) {
+              const activeParts = Array.isArray(exp.participants) ? exp.participants : members;
+              $('expParticipantsCheckboxGroup').innerHTML = members
+                .map(
+                  (m) => `
+                  <label class="flex items-center gap-2.5 py-1 text-xs font-semibold text-slate-700 cursor-pointer">
+                    <input type="checkbox" value="${escapeHtml(m)}" ${activeParts.includes(m) ? 'checked' : ''} class="exp-participant-chk w-4 h-4 rounded border-slate-300 text-sky-600" />
+                    <span>${escapeHtml(m)}</span>
+                  </label>
+                `
+                )
+                .join('');
+            }
+            openModalSafe('modalAddExpense');
+          }
+          break;
+        }
+
+        case 'delete-expense': {
+          const trip = getActiveTrip();
+          if (trip && confirm('이 지출 내역을 삭제하시겠습니까?')) {
+            trip.expenses = (trip.expenses || []).filter((ex) => ex.id !== id);
+            saveLocalData();
+            syncTripToFirestore(trip);
+            renderExpensesTab(trip);
+          }
+          break;
+        }
+
+        case 'view-photo': {
+          const trip = getActiveTrip();
+          const photo = trip?.photos?.find((p) => p.id === id);
+          if (photo) {
+            viewingPhotoId = photo.id;
+            if ($('viewPhotoDayAndDate')) $('viewPhotoDayAndDate').textContent = `Day ${photo.day} · ${photo.category || '기타'} ${photo.date ? `(${photo.date})` : ''}`;
+            if ($('viewPhotoPlaceTitle')) $('viewPhotoPlaceTitle').textContent = photo.place || '장소 기록';
+            if ($('viewPhotoFullImg')) $('viewPhotoFullImg').src = photo.dataUrl;
+            if ($('viewPhotoMemoText')) $('viewPhotoMemoText').textContent = photo.memo || '등록된 메모가 없습니다.';
+            openModalSafe('modalViewPhoto');
+          }
+          break;
+        }
+
+        case 'edit-viewing-photo': {
+          const trip = getActiveTrip();
+          const photo = trip?.photos?.find((p) => p.id === viewingPhotoId);
+          if (photo) {
+            const newPlace = prompt('장소명을 수정하세요:', photo.place || '');
+            if (newPlace !== null && newPlace.trim() !== '') photo.place = newPlace.trim();
+            const newMemo = prompt('메모를 수정하세요:', photo.memo || '');
+            if (newMemo !== null) photo.memo = newMemo.trim();
+            if ($('viewPhotoPlaceTitle')) $('viewPhotoPlaceTitle').textContent = photo.place;
+            if ($('viewPhotoMemoText')) $('viewPhotoMemoText').textContent = photo.memo || '등록된 메모가 없습니다.';
+            saveLocalData();
+            renderPhotosTab(trip);
+            await syncTripToFirestore(trip);
+          }
+          break;
+        }
+
+        case 'delete-viewing-photo': {
+          const trip = getActiveTrip();
+          if (trip && viewingPhotoId && confirm('이 사진을 삭제하시겠습니까?')) {
+            trip.photos = (trip.photos || []).filter((p) => p.id !== viewingPhotoId);
+            viewingPhotoId = null;
+            saveLocalData();
+            closeModalSafe('modalViewPhoto');
+            renderPhotosTab(trip);
+            await syncTripToFirestore(trip);
+          }
+          break;
+        }
+
+        case 'toggle-review-photo': {
+          const trip = getActiveTrip();
+          if (!trip || !id) return;
+          if (selectedReviewPhotoIds.includes(id)) {
+            selectedReviewPhotoIds = selectedReviewPhotoIds.filter((pid) => pid !== id);
+          } else {
+            selectedReviewPhotoIds.push(id);
+          }
+          renderReviewPhotoThumbnails(trip);
+          break;
+        }
+
+        case 'edit-review':
+        case 'edit-global-review': {
+          const targetTrip = tripId ? trips.find((t) => t.id === tripId) : getActiveTrip();
+          const rv = targetTrip?.reviews?.find((r) => r.id === id);
+          if (targetTrip && rv) {
+            editingReviewId = rv.id;
+            editingReviewTripId = targetTrip.id;
+            currentReviewPriceMemo = rv.priceMemo || '';
+            if ($('modalReviewHeading')) $('modalReviewHeading').textContent = '리뷰 수정';
+            populateAllDaySelectors(targetTrip);
+            if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = rv.place || '';
+            if ($('selectReviewCategory')) $('selectReviewCategory').value = rv.category || '맛집/카페';
+            if ($('selectReviewDay')) $('selectReviewDay').value = String(rv.day || 1);
+            setReviewStarRating(rv.rating || 5);
+            if ($('chkReviewRevisit')) $('chkReviewRevisit').checked = Boolean(rv.revisit);
+            if ($('inputReviewContent')) $('inputReviewContent').value = rv.content || '';
+            selectedReviewPhotoIds = Array.isArray(rv.photoIds) ? [...rv.photoIds] : [];
+            renderReviewPhotoThumbnails(targetTrip);
+            openModalSafe('modalAddReview');
+          }
+          break;
+        }
+
+        case 'delete-review': {
+          const trip = getActiveTrip();
+          if (trip && confirm('이 리뷰를 삭제하시겠습니까?')) {
+            trip.reviews = (trip.reviews || []).filter((r) => r.id !== id);
+            saveLocalData();
+            syncTripToFirestore(trip);
+            await deleteReviewFromGlobalCollection(id);
+            renderReviewsTab(trip);
+          }
+          break;
+        }
+
+        case 'edit-cl-item': {
+          const trip = getActiveTrip();
+          if (!trip) return;
+          const targetArr = currentChecklistSubTab === 'shopping' ? trip.shoppingList : trip.packingList;
+          const item = (targetArr || []).find((c) => c.id === id);
+          if (item) {
+            const newText = prompt('항목명을 수정하세요:', item.text);
+            if (newText !== null && newText.trim() !== '') {
+              item.text = newText.trim();
+              if (currentChecklistSubTab === 'shopping') {
+                const newPrice = prompt('예상 가격을 수정하세요 (숫자):', String(item.expectedPrice || 0));
+                if (newPrice !== null) item.expectedPrice = Number(newPrice) || 0;
+              }
+              saveLocalData();
+              syncTripToFirestore(trip);
+              renderChecklistTab(trip);
+            }
+          }
+          break;
+        }
+
+        case 'delete-cl-item': {
+          const trip = getActiveTrip();
+          if (!trip) return;
+          if (currentChecklistSubTab === 'shopping') {
+            trip.shoppingList = (trip.shoppingList || []).filter((c) => c.id !== id);
+          } else {
+            trip.packingList = (trip.packingList || []).filter((c) => c.id !== id);
+          }
+          saveLocalData();
+          syncTripToFirestore(trip);
+          renderChecklistTab(trip);
+          break;
+        }
       }
     } catch (err) {
-      console.error('전역 클릭 위임 처리 오류:', err);
+      console.error('클릭 이벤트 위임 예외:', err);
     }
   });
 
-  // 체크리스트/쇼핑리스트 체크박스 토글 위임
-  document.addEventListener('change', (e) => {
+  // --------------------------------------------------------------------------
+  // [B] change 및 input 이벤트 바인딩
+  // --------------------------------------------------------------------------
+  document.body.addEventListener('change', async (e) => {
     try {
       const target = e.target;
-      if (target && target.getAttribute('data-action') === 'toggle-cl-item') {
+      if (!target) return;
+
+      if (target.getAttribute('data-action') === 'toggle-cl-item') {
         const id = target.getAttribute('data-id');
         const trip = getActiveTrip();
         if (!trip) return;
@@ -2106,66 +2277,104 @@ document.addEventListener('DOMContentLoaded', () => {
           syncTripToFirestore(trip);
           renderChecklistTab(trip);
         }
+        return;
+      }
+
+      if (target.id === 'selectItineraryDay') {
+        const trip = getActiveTrip();
+        if (trip) renderItineraryTab(trip);
+        return;
+      }
+
+      if (target.id === 'selectPhotoDayFilter') {
+        const trip = getActiveTrip();
+        if (trip) renderPhotosTab(trip);
+        return;
+      }
+
+      if (target.id === 'selectExpCurrency') {
+        await syncExpenseModalRateFromApi();
+        return;
+      }
+
+      if (target.id === 'inputPhotoFile') {
+        const file = target.files?.[0];
+        if (file) {
+          const previewUrl = await compressImageFileToBase64(file, 800, 0.7);
+          if ($('imgPhotoUploadPreview')) $('imgPhotoUploadPreview').src = previewUrl;
+          $('photoPreviewWrapper')?.classList.remove('hidden');
+        }
+        return;
+      }
+
+      if (target.id === 'selectReviewFromBooking') {
+        const bkId = target.value;
+        const trip = getActiveTrip();
+        if (!trip || !bkId) return;
+        const bk = (trip.bookings || []).find((b) => b.id === bkId);
+        if (!bk) return;
+
+        if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = bk.title || '';
+        if ($('selectReviewCategory')) {
+          $('selectReviewCategory').value = bk.category === '숙소' ? '숙소' : '관광지';
+        }
+        if (bk.date && $('selectReviewDay')) {
+          $('selectReviewDay').value = String(inferDayNumberFromDate(trip, bk.date));
+        }
+        if (Number(bk.amount) > 0) {
+          currentReviewPriceMemo = `${Number(bk.amount).toLocaleString()} ${bk.currency || 'KRW'}`;
+        }
+        if (bk.memo && $('inputReviewContent') && !$('inputReviewContent').value.trim()) {
+          $('inputReviewContent').value = bk.memo;
+        }
+        return;
+      }
+
+      if (target.id === 'inputImportJsonFile') {
+        const file = target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          try {
+            const parsed = JSON.parse(ev.target.result);
+            if (parsed && Array.isArray(parsed.trips)) {
+              trips = parsed.trips.map(normalizeTrip).filter(Boolean);
+              if (Array.isArray(parsed.allReviews)) allReviews = parsed.allReviews;
+              if (parsed.privateBudgets && typeof parsed.privateBudgets === 'object') {
+                privateBudgets = { ...privateBudgets, ...parsed.privateBudgets };
+              }
+              saveLocalData();
+              if (isCloudOnline && db) {
+                trips.forEach((t) => syncTripToFirestore(t));
+              }
+              if (currentTripId) renderDetailView();
+              else renderHomeView();
+              alert(`총 ${trips.length}개의 여행 기록이 복원되었습니다.`);
+            } else {
+              alert('올바른 Travel Journal 백업 파일이 아닙니다.');
+            }
+          } catch (err) {
+            alert('JSON 파일을 읽는 중 오류가 발생했습니다.');
+          }
+        };
+        reader.readAsText(file);
+        target.value = '';
       }
     } catch (err) {
-      console.error('체크리스트 토글 오류:', err);
+      console.error('change 이벤트 처리 오류:', err);
+    }
+  });
+
+  document.body.addEventListener('input', (e) => {
+    const id = e.target?.id;
+    if (id === 'inputExpAmount' || id === 'inputExpAppliedRate') {
+      updateExpenseModalRatePreview();
     }
   });
 
   // --------------------------------------------------------------------------
-  // [B] 공통 상단 헤더 버튼 바인딩
+  // [C] 모든 Form Submit 이벤트 바인딩
   // --------------------------------------------------------------------------
-  $('btnHeaderBackToHome')?.addEventListener('click', exitTripDetailToHome);
-
-  $('btnHeaderCopyInvite')?.addEventListener('click', () => {
-    const trip = getActiveTrip();
-    if (!trip) return;
-    const shareMsg = `[${trip.title}] 여행에 초대합니다!\n초대 코드: ${trip.inviteCode}`;
-    shareOrCopyText(trip.title, shareMsg, `초대 코드 [${trip.inviteCode}]가 복사되었습니다!`);
-  });
-
-  $('btnHeaderRefreshRates')?.addEventListener('click', async () => {
-    try {
-      const label = $('headerRateTimestamp');
-      if (label) label.textContent = '환율 갱신 중...';
-      const [jpy, usd, eur] = await Promise.all([
-        fetchLiveExchangeRate('JPY'),
-        fetchLiveExchangeRate('USD'),
-        fetchLiveExchangeRate('EUR')
-      ]);
-      if (label) {
-        label.textContent = `JPY ${jpy.rate} · USD ${usd.rate} · EUR ${eur.rate}`;
-      }
-      alert(
-        `최신 원화(KRW) 매매기준율이 반영되었습니다.\n` +
-        `• 1 JPY = ${jpy.rate.toFixed(2)} KRW\n` +
-        `• 1 USD = ${usd.rate.toLocaleString()} KRW\n` +
-        `• 1 EUR = ${eur.rate.toLocaleString()} KRW`
-      );
-    } catch (err) {
-      console.error('환율 갱신 오류:', err);
-    }
-  });
-
-  // --------------------------------------------------------------------------
-  // [C] 홈 화면: 새 여행 만들기 & 초대 코드 참여
-  // --------------------------------------------------------------------------
-  $('btnOpenNewTripModal')?.addEventListener('click', () => {
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      if ($('inputNewTripTitle')) $('inputNewTripTitle').value = '';
-      if ($('inputNewTripDestination')) $('inputNewTripDestination').value = '';
-      if ($('inputNewTripStartDate')) $('inputNewTripStartDate').value = today;
-      if ($('inputNewTripEndDate')) $('inputNewTripEndDate').value = today;
-      if ($('selectNewTripCurrency')) $('selectNewTripCurrency').value = 'KRW';
-      if ($('inputNewTripMyBudget')) $('inputNewTripMyBudget').value = '1500000';
-      if ($('inputNewTripMembers')) $('inputNewTripMembers').value = '나, 동행1';
-      openModalSafe('modalNewTrip');
-    } catch (err) {
-      console.error('새 여행 모달 열기 예외:', err);
-    }
-  });
-
   $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
@@ -2236,7 +2445,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (!isCloudOnline || !db) {
-        alert('유효하지 않은 초대 코드입니다.\n(다른 기기의 여행에 합류하려면 app.js 상단의 firebaseConfig를 설정해주세요.)');
+        alert('해당 초대 코드를 로컬에서 찾지 못했습니다.');
         return;
       }
 
@@ -2272,26 +2481,6 @@ document.addEventListener('DOMContentLoaded', () => {
       console.error('초대 코드 합류 예외:', err);
       alert('여행 합류 중 오류가 발생했습니다.');
     }
-  });
-
-  // --------------------------------------------------------------------------
-  // [D] 탭 1: 일정(Itinerary) + AI 맞춤 추천 + 카톡 일정 공유 바인딩
-  // --------------------------------------------------------------------------
-  $('selectItineraryDay')?.addEventListener('change', () => {
-    const trip = getActiveTrip();
-    if (trip) renderItineraryTab(trip);
-  });
-
-  $('btnOpenAddScheduleModal')?.addEventListener('click', () => {
-    const trip = getActiveTrip();
-    if (!trip) return;
-    editingScheduleId = null;
-    populateAllDaySelectors(trip);
-    if ($('selectModalScheduleDay')) $('selectModalScheduleDay').value = $('selectItineraryDay')?.value || '1';
-    if ($('inputModalScheduleTime')) $('inputModalScheduleTime').value = '10:00';
-    if ($('inputModalSchedulePlace')) $('inputModalSchedulePlace').value = '';
-    if ($('inputModalScheduleMemo')) $('inputModalScheduleMemo').value = '';
-    openModalSafe('modalAddSchedule');
   });
 
   $('formCreateSchedule')?.addEventListener('submit', async (e) => {
@@ -2331,220 +2520,6 @@ document.addEventListener('DOMContentLoaded', () => {
       await syncTripToFirestore(trip);
     } catch (err) {
       console.error('일정 저장 예외:', err);
-    }
-  });
-
-  // AI 맞춤 추천 패널 및 공유 버튼 이벤트 위임
-  document.addEventListener('click', async (e) => {
-    if (e.target.closest('#btnOpenAiPlannerPanel')) {
-      $('aiPlannerBox')?.classList.toggle('hidden');
-      return;
-    }
-    if (e.target.closest('#btnCloseAiPlannerBox')) {
-      $('aiPlannerBox')?.classList.add('hidden');
-      return;
-    }
-    if (e.target.closest('#btnGenerateAiSchedule')) {
-      const trip = getActiveTrip();
-      if (!trip) return;
-      const concept = ($('inputAiConcept')?.value || '').trim() || '현지 대표 명소 및 미식 탐방';
-      const budgetMan = Number($('inputAiTargetBudget')?.value) || 100;
-      const totalDays = calculateTripDays(trip);
-
-      // 기존 확정된 예약 및 일정을 분석해 빈 시간대 맞춤 일정 생성
-      const suggestions = [];
-      for (let d = 1; d <= totalDays; d++) {
-        const existingTimes = new Set(
-          (trip.itineraries || []).filter((s) => Number(s.day) === d).map((s) => s.time)
-        );
-        if (!existingTimes.has('10:30')) {
-          suggestions.push({
-            day: d,
-            time: '10:30',
-            place: `${trip.destination} 핵심 명소 산책 (Day ${d})`,
-            memo: `컨셉: ${concept} · 오전 여유 동선`
-          });
-        }
-        if (!existingTimes.has('12:30')) {
-          suggestions.push({
-            day: d,
-            time: '12:30',
-            place: `${trip.destination} 현지 로컬 맛집 런치`,
-            memo: `예산 약 ${Math.round(budgetMan / totalDays)}만원/일 배분 추천`
-          });
-        }
-        if (!existingTimes.has('15:30')) {
-          suggestions.push({
-            day: d,
-            time: '15:30',
-            place: `${trip.destination} 감성 카페 & 전망 스폿`,
-            memo: `${concept} 테마 추천 코스`
-          });
-        }
-      }
-
-      aiGeneratedSuggestions = suggestions;
-      const listEl = $('aiSuggestionItemsList');
-      if (listEl) {
-        listEl.innerHTML = suggestions
-          .map(
-            (s) =>
-              `<div class="bg-white px-2.5 py-1.5 rounded-lg border border-indigo-100">
-                <strong>[Day ${s.day} ${s.time}]</strong> ${escapeHtml(s.place)}
-                <span class="block text-[10px] text-slate-400">${escapeHtml(s.memo)}</span>
-              </div>`
-          )
-          .join('');
-      }
-      $('aiSuggestionResultArea')?.classList.remove('hidden');
-      return;
-    }
-    if (e.target.closest('#btnApplyAllAiSchedules')) {
-      const trip = getActiveTrip();
-      if (!trip || aiGeneratedSuggestions.length === 0) return;
-
-      aiGeneratedSuggestions.forEach((s, idx) => {
-        trip.itineraries.push({
-          id: 'it_ai_' + Date.now() + '_' + idx,
-          day: s.day,
-          time: s.time,
-          place: s.place,
-          memo: s.memo
-        });
-      });
-
-      const addedCount = aiGeneratedSuggestions.length;
-      aiGeneratedSuggestions = [];
-      $('aiSuggestionResultArea')?.classList.add('hidden');
-      $('aiPlannerBox')?.classList.add('hidden');
-
-      saveLocalData();
-      renderItineraryTab(trip);
-      await syncTripToFirestore(trip);
-      alert(`AI 맞춤 추천 일정 ${addedCount}건이 내 일정표에 한 번에 추가되었습니다!`);
-      return;
-    }
-    if (e.target.closest('#btnShareItineraryText')) {
-      const trip = getActiveTrip();
-      if (!trip) return;
-      const selectedDay = Number($('selectItineraryDay')?.value) || 1;
-      const dateStr = getDateForTripDay(trip, selectedDay);
-      const dayItems = (trip.itineraries || [])
-        .filter((s) => Number(s.day) === selectedDay)
-        .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-
-      const lines = [
-        `✈️ [${trip.title}] Day ${selectedDay} 일정 (${dateStr})`,
-        `━━━━━━━━━━━━━━━━━━`,
-        ...(dayItems.length === 0
-          ? ['• 등록된 일정이 없습니다.']
-          : dayItems.map((s) => `⏰ ${s.time} | ${s.place}${s.memo ? `\n   └ ${s.memo}` : ''}`))
-      ];
-      shareOrCopyText(`${trip.title} 일정`, lines.join('\n'), '일정 요약 텍스트가 복사되었습니다!');
-      return;
-    }
-    if (e.target.closest('#btnShareSettlementSummary')) {
-      const trip = getActiveTrip();
-      if (!trip) return;
-      const summaryText = $('settlementTransfersContainer')?.innerText || '';
-      const totalText = $('groupTotalExpenseKrw')?.textContent || '';
-      const text = [
-        `💸 [${trip.title}] 1/N 정산 안내`,
-        `━━━━━━━━━━━━━━━━━━`,
-        `• ${totalText}`,
-        summaryText.replace('정산 내역 카톡 공유 💸', '').trim()
-      ].join('\n');
-      shareOrCopyText(`${trip.title} 정산`, text, '1/N 정산 요약이 클립보드에 복사되었습니다!');
-    }
-  });
-
-  // --------------------------------------------------------------------------
-  // [E] 탭 2: 예약(Bookings) - 편명 자동조회 + 3중 자동 연동 바인딩
-  // --------------------------------------------------------------------------
-  $('btnOpenAddBookingModal')?.addEventListener('click', () => {
-    try {
-      const trip = getActiveTrip();
-      if (!trip) return;
-      editingBookingId = null;
-
-      const priv = getMyPrivateInfo(trip);
-      const members = trip.members || [priv.myNickname];
-
-      if ($('selectBookingCategory')) $('selectBookingCategory').value = '항공';
-      if ($('inputBookingDate')) $('inputBookingDate').value = trip.startDate || '';
-      if ($('inputBookingTitle')) $('inputBookingTitle').value = '';
-      if ($('inputBookingFlightLookupCode')) $('inputBookingFlightLookupCode').value = '';
-      if ($('inputBookingTime')) $('inputBookingTime').value = '10:00';
-      if ($('inputBookingCode')) $('inputBookingCode').value = '';
-      if ($('inputBookingMemo')) $('inputBookingMemo').value = '';
-      if ($('selectBookingCurrency')) $('selectBookingCurrency').value = trip.baseCurrency || 'KRW';
-      if ($('inputBookingAmount')) $('inputBookingAmount').value = '';
-      if ($('chkBookingAutoSync')) $('chkBookingAutoSync').checked = true;
-
-      if ($('selectBookingPayer')) {
-        $('selectBookingPayer').innerHTML = members
-          .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
-          .join('');
-        $('selectBookingPayer').value = priv.myNickname;
-      }
-      if ($('bookingParticipantsGroup')) {
-        $('bookingParticipantsGroup').innerHTML = members
-          .map(
-            (m) => `
-            <label class="inline-flex items-center gap-1 text-xs bg-white border border-slate-200 px-2 py-1 rounded-lg">
-              <input type="checkbox" value="${escapeHtml(m)}" checked class="bk-part-chk" />
-              <span>${escapeHtml(m)}</span>
-            </label>
-          `
-          )
-          .join('');
-      }
-
-      openModalSafe('modalAddBooking');
-    } catch (err) {
-      console.error('예약 모달 열기 예외:', err);
-    }
-  });
-
-  // [편명 자동조회] 버튼 클릭 시 Firestore flightCache/{편명} 우선 조회 후 API 호출
-  document.addEventListener('click', async (e) => {
-    const lookupBtn = e.target.closest('#btnLookupBookingFlight');
-    if (!lookupBtn) return;
-
-    try {
-      const codeInput = $('inputBookingFlightLookupCode');
-      const code = (codeInput?.value || '').replace(/\s+/g, '').toUpperCase();
-      if (!code) {
-        alert('조회할 항공편명을 입력해주세요. (예: RS471, KE703)');
-        return;
-      }
-
-      lookupBtn.disabled = true;
-      lookupBtn.textContent = '조회 중...';
-
-      const info = await lookupFlightWithSharedCache(code);
-      if (info) {
-        const routePart = info.dep && info.arr ? ` (${info.dep} ➔ ${info.arr})` : '';
-        if ($('inputBookingTitle')) {
-          $('inputBookingTitle').value = `${info.airline} ${info.flightNo}${routePart}`.trim();
-        }
-        if (info.depTime && $('inputBookingTime')) {
-          $('inputBookingTime').value = info.depTime;
-        }
-        if (info.memo && $('inputBookingMemo') && !$('inputBookingMemo').value.trim()) {
-          $('inputBookingMemo').value = info.memo;
-        }
-        alert(
-          `[${info.airline} ${info.flightNo}] 정보가 입력되었습니다. (${info.fromCache ? '공용 캐시' : '실시간 조회'})`
-        );
-      } else {
-        alert('일치하는 항공편 정보를 찾지 못했습니다. 직접 입력해주세요.');
-      }
-    } catch (err) {
-      console.error('편명 자동조회 오류:', err);
-    } finally {
-      lookupBtn.disabled = false;
-      lookupBtn.textContent = '편명 자동조회 ✈️';
     }
   });
 
@@ -2595,7 +2570,7 @@ document.addEventListener('DOMContentLoaded', () => {
         trip.bookings.push(bookingObj);
       }
 
-      // 3중 자동 연동: 동일 bookingId를 가진 일정 & 지출 항목 생성/수정/삭제
+      // 예약 ➔ 일정 & 지출 3중 자동 연동
       trip.itineraries = (trip.itineraries || []).filter((s) => s.bookingId !== bookingId);
       trip.expenses = (trip.expenses || []).filter((ex) => ex.bookingId !== bookingId);
 
@@ -2638,18 +2613,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --------------------------------------------------------------------------
-  // [F] 탭 3: 지출/정산(Expenses) - 환율 조회, 원화 환산 미리보기, 수정/저장
-  // --------------------------------------------------------------------------
-  $('btnTogglePrivateBudgetForm')?.addEventListener('click', () => {
-    const trip = getActiveTrip();
-    const form = $('formUpdatePrivateBudget');
-    if (!trip || !form) return;
-    const priv = getMyPrivateInfo(trip);
-    if ($('inputPrivateBudgetValue')) $('inputPrivateBudgetValue').value = String(priv.myBudget);
-    form.classList.toggle('hidden');
-  });
-
   $('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
     e.preventDefault();
     const trip = getActiveTrip();
@@ -2664,58 +2627,6 @@ document.addEventListener('DOMContentLoaded', () => {
     $('formUpdatePrivateBudget')?.classList.add('hidden');
     renderExpensesTab(trip);
   });
-
-  $('btnOpenAddExpenseModal')?.addEventListener('click', () => {
-    try {
-      const trip = getActiveTrip();
-      if (!trip) return;
-      editingExpenseId = null;
-
-      const priv = getMyPrivateInfo(trip);
-      const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : [priv.myNickname];
-
-      if ($('inputExpTitle')) $('inputExpTitle').value = '';
-      if ($('selectExpCurrency')) $('selectExpCurrency').value = 'KRW';
-      if ($('inputExpAmount')) $('inputExpAmount').value = '';
-      if ($('inputExpAppliedRate')) $('inputExpAppliedRate').value = '1';
-      if ($('expRateSourceText')) $('expRateSourceText').textContent = '적용 환율 (1 KRW = 1 KRW)';
-      if ($('expRateUnitPrefix')) $('expRateUnitPrefix').textContent = '1 KRW =';
-      if ($('expConvertedKrwPreview')) $('expConvertedKrwPreview').textContent = '0 KRW';
-
-      const payerSel = $('selectExpPayer');
-      if (payerSel) {
-        payerSel.innerHTML = members
-          .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
-          .join('');
-        if (members.includes(priv.myNickname)) {
-          payerSel.value = priv.myNickname;
-        }
-      }
-
-      const groupEl = $('expParticipantsCheckboxGroup');
-      if (groupEl) {
-        groupEl.innerHTML = members
-          .map(
-            (m) => `
-            <label class="flex items-center gap-2.5 py-1 text-xs font-semibold text-slate-700 cursor-pointer">
-              <input type="checkbox" value="${escapeHtml(m)}" checked class="exp-participant-chk w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
-              <span>${escapeHtml(m)}</span>
-            </label>
-          `
-          )
-          .join('');
-      }
-
-      openModalSafe('modalAddExpense');
-    } catch (err) {
-      console.error('지출 모달 열기 예외:', err);
-    }
-  });
-
-  $('selectExpCurrency')?.addEventListener('change', syncExpenseModalRateFromApi);
-  $('btnFetchLatestExchangeRate')?.addEventListener('click', syncExpenseModalRateFromApi);
-  $('inputExpAmount')?.addEventListener('input', updateExpenseModalRatePreview);
-  $('inputExpAppliedRate')?.addEventListener('input', updateExpenseModalRatePreview);
 
   $('formCreateExpense')?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -2780,44 +2691,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --------------------------------------------------------------------------
-  // [G] 탭 4: 사진(Photos) - Canvas 최대 가로 800px, JPEG 0.7 압축 + 정보 수정
-  // --------------------------------------------------------------------------
-  $('selectPhotoDayFilter')?.addEventListener('change', () => {
-    const trip = getActiveTrip();
-    if (trip) renderPhotosTab(trip);
-  });
-
-  $('btnOpenAddPhotoModal')?.addEventListener('click', () => {
-    try {
-      const trip = getActiveTrip();
-      if (!trip) return;
-      populateAllDaySelectors(trip);
-      if ($('inputPhotoFile')) $('inputPhotoFile').value = '';
-      $('photoPreviewWrapper')?.classList.add('hidden');
-      if ($('imgPhotoUploadPreview')) $('imgPhotoUploadPreview').src = '';
-      if ($('selectPhotoCategory')) $('selectPhotoCategory').value = '관광지';
-      if ($('inputPhotoDate')) $('inputPhotoDate').value = trip.startDate || new Date().toISOString().split('T')[0];
-      if ($('inputPhotoPlace')) $('inputPhotoPlace').value = '';
-      if ($('inputPhotoMemo')) $('inputPhotoMemo').value = '';
-      openModalSafe('modalAddPhoto');
-    } catch (err) {
-      console.error('사진 추가 모달 열기 예외:', err);
-    }
-  });
-
-  $('inputPhotoFile')?.addEventListener('change', async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      const previewUrl = await compressImageToBase64(file, 800, 0.7);
-      if ($('imgPhotoUploadPreview')) $('imgPhotoUploadPreview').src = previewUrl;
-      $('photoPreviewWrapper')?.classList.remove('hidden');
-    } catch (err) {
-      console.error('이미지 미리보기 오류:', err);
-    }
-  });
-
   $('formCreatePhoto')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
@@ -2836,7 +2709,7 @@ document.addEventListener('DOMContentLoaded', () => {
         submitBtn.textContent = '압축 및 저장 중...';
       }
 
-      const compressedBase64 = await compressImageToBase64(file, 800, 0.7);
+      const compressedBase64 = await compressImageFileToBase64(file, 800, 0.7);
       const category = $('selectPhotoCategory')?.value || '기타';
       const day = Number($('selectPhotoDay')?.value) || 1;
       const date = $('inputPhotoDate')?.value || '';
@@ -2871,106 +2744,6 @@ document.addEventListener('DOMContentLoaded', () => {
       if (submitBtn) {
         submitBtn.disabled = false;
         submitBtn.textContent = '사진 저장';
-      }
-    }
-  });
-
-  document.addEventListener('click', async (e) => {
-    if (e.target.closest('#btnEditViewingPhoto')) {
-      const trip = getActiveTrip();
-      const photo = trip?.photos?.find((p) => p.id === viewingPhotoId);
-      if (!photo) return;
-      const newPlace = prompt('장소명을 수정하세요:', photo.place || '');
-      if (newPlace !== null && newPlace.trim() !== '') {
-        photo.place = newPlace.trim();
-      }
-      const newMemo = prompt('메모를 수정하세요:', photo.memo || '');
-      if (newMemo !== null) {
-        photo.memo = newMemo.trim();
-      }
-      if ($('viewPhotoPlaceTitle')) $('viewPhotoPlaceTitle').textContent = photo.place;
-      if ($('viewPhotoMemoText')) $('viewPhotoMemoText').textContent = photo.memo || '등록된 메모가 없습니다.';
-      saveLocalData();
-      renderPhotosTab(trip);
-      await syncTripToFirestore(trip);
-    }
-  });
-
-  $('btnDeleteViewingPhoto')?.addEventListener('click', async () => {
-    const trip = getActiveTrip();
-    if (!trip || !viewingPhotoId) return;
-    if (confirm('이 사진을 삭제하시겠습니까?')) {
-      trip.photos = (trip.photos || []).filter((p) => p.id !== viewingPhotoId);
-      viewingPhotoId = null;
-      saveLocalData();
-      closeModalSafe('modalViewPhoto');
-      renderPhotosTab(trip);
-      await syncTripToFirestore(trip);
-    }
-  });
-
-  // --------------------------------------------------------------------------
-  // [H] 탭 5: 리뷰(Reviews) - 예약 불러오기 + 여행 사진 불러오기 + 통합 아카이브(allReviews)
-  // --------------------------------------------------------------------------
-  $('btnOpenAddReviewModal')?.addEventListener('click', () => {
-    try {
-      const trip = getActiveTrip();
-      if (!trip) return;
-      editingReviewId = null;
-      editingReviewTripId = trip.id;
-      currentReviewPriceMemo = '';
-      selectedReviewPhotoIds = [];
-
-      populateAllDaySelectors(trip);
-
-      // 예약 내역 불러오기 드롭다운 채우기
-      const bkSelect = $('selectReviewFromBooking');
-      if (bkSelect) {
-        bkSelect.innerHTML = '<option value="">직접 입력 (또는 예약 내역 선택)</option>';
-        (trip.bookings || []).forEach((b) => {
-          const opt = document.createElement('option');
-          opt.value = b.id;
-          const costStr = Number(b.amount) > 0 ? ` · ${Number(b.amount).toLocaleString()} ${b.currency}` : '';
-          opt.textContent = `[${b.category}] ${b.title}${costStr}`;
-          bkSelect.appendChild(opt);
-        });
-      }
-
-      if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = '';
-      if ($('selectReviewCategory')) $('selectReviewCategory').value = '맛집/카페';
-      if ($('selectReviewDay')) $('selectReviewDay').value = '1';
-      setReviewStarRating(5);
-      if ($('chkReviewRevisit')) $('chkReviewRevisit').checked = true;
-      if ($('inputReviewContent')) $('inputReviewContent').value = '';
-
-      renderReviewPhotoThumbnails(trip);
-      openModalSafe('modalAddReview');
-    } catch (err) {
-      console.error('리뷰 모달 열기 예외:', err);
-    }
-  });
-
-  // 예약 내역 선택 시 장소명·카테고리·가격 자동 입력
-  document.addEventListener('change', (e) => {
-    if (e.target && e.target.id === 'selectReviewFromBooking') {
-      const bkId = e.target.value;
-      const trip = getActiveTrip();
-      if (!trip || !bkId) return;
-      const bk = (trip.bookings || []).find((b) => b.id === bkId);
-      if (!bk) return;
-
-      if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = bk.title || '';
-      if ($('selectReviewCategory')) {
-        $('selectReviewCategory').value = bk.category === '숙소' ? '숙소' : '관광지';
-      }
-      if (bk.date && $('selectReviewDay')) {
-        $('selectReviewDay').value = String(inferDayNumberFromDate(trip, bk.date));
-      }
-      if (Number(bk.amount) > 0) {
-        currentReviewPriceMemo = `${Number(bk.amount).toLocaleString()} ${bk.currency || 'KRW'}`;
-      }
-      if (bk.memo && $('inputReviewContent') && !$('inputReviewContent').value.trim()) {
-        $('inputReviewContent').value = bk.memo;
       }
     }
   });
@@ -3034,9 +2807,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // --------------------------------------------------------------------------
-  // [I] 탭 6: 체크리스트 / 쇼핑리스트 / JSON 백업·복원 / 인쇄·PDF 저장
-  // --------------------------------------------------------------------------
   $('formAddChecklistItem')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
@@ -3045,71 +2815,4 @@ document.addEventListener('DOMContentLoaded', () => {
       const text = ($('inputNewChecklistText')?.value || '').trim();
       if (!text) return;
 
-      if (currentChecklistSubTab === 'shopping') {
-        const expectedPrice = Number($('inputShoppingExpectedPrice')?.value) || 0;
-        if (!Array.isArray(trip.shoppingList)) trip.shoppingList = [];
-        trip.shoppingList.unshift({
-          id: 'sh_' + Date.now(),
-          text,
-          expectedPrice,
-          checked: false
-        });
-        if ($('inputShoppingExpectedPrice')) $('inputShoppingExpectedPrice').value = '';
-      } else {
-        if (!Array.isArray(trip.packingList)) trip.packingList = [];
-        trip.packingList.unshift({
-          id: 'pk_' + Date.now(),
-          text,
-          checked: false
-        });
-      }
-
-      if ($('inputNewChecklistText')) $('inputNewChecklistText').value = '';
-      saveLocalData();
-      renderChecklistTab(trip);
-      await syncTripToFirestore(trip);
-    } catch (err) {
-      console.error('체크리스트/쇼핑리스트 추가 예외:', err);
-    }
-  });
-
-  $('btnExportJsonData')?.addEventListener('click', () => {
-    try {
-      const exportObj = {
-        app: 'Travel Journal',
-        version: 4,
-        exportedAt: new Date().toISOString(),
-        trips,
-        allReviews,
-        privateBudgets
-      };
-      const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `travel-journal-backup-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (err) {
-      alert('JSON 백업 내보내기 중 오류가 발생했습니다.');
-    }
-  });
-
-  $('btnImportJsonTrigger')?.addEventListener('click', () => {
-    $('inputImportJsonFile')?.click();
-  });
-
-  $('inputImportJsonFile')?.addEventListener('change', (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      try {
-        const parsed = JSON.parse(ev.target.result);
-        if (parsed && Array.isArray(parsed.trips)) {
-          trips = parsed.trips.map(normalizeTrip).filter(Boolean);
-          if (Array.isArray(parsed.allReviews)) allReviews = parsed.allReviews;
-          if (parsed.privateBudgets && typeof parsed.privateBudgets === 'object') {
-            
+      if (currentChecklistSubTab ===

@@ -2816,3 +2816,103 @@ function bindAllUiEvents() {
       if (!text) return;
 
       if (currentChecklistSubTab ===
+                  'shopping'
+      ) {
+        const expectedPrice = Number($('inputShoppingExpectedPrice')?.value) || 0;
+        if (!Array.isArray(trip.shoppingList)) trip.shoppingList = [];
+        trip.shoppingList.unshift({
+          id: 'sh_' + Date.now(),
+          text,
+          expectedPrice,
+          checked: false
+        });
+        if ($('inputShoppingExpectedPrice')) $('inputShoppingExpectedPrice').value = '';
+      } else {
+        if (!Array.isArray(trip.packingList)) trip.packingList = [];
+        trip.packingList.unshift({
+          id: 'pk_' + Date.now(),
+          text,
+          checked: false
+        });
+      }
+
+      if ($('inputNewChecklistText')) $('inputNewChecklistText').value = '';
+      saveLocalData();
+      renderChecklistTab(trip);
+      await syncTripToFirestore(trip);
+    } catch (err) {
+      console.error('체크리스트/쇼핑리스트 추가 예외:', err);
+    }
+  });
+
+  $('btnExportJsonData')?.addEventListener('click', () => {
+    try {
+      const exportObj = {
+        app: 'Travel Journal',
+        version: 4,
+        exportedAt: new Date().toISOString(),
+        trips,
+        allReviews,
+        privateBudgets
+      };
+      const blob = new Blob([JSON.stringify(exportObj, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `travel-journal-backup-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('JSON 백업 내보내기 중 오류가 발생했습니다.');
+    }
+  });
+
+  $('btnImportJsonTrigger')?.addEventListener('click', () => {
+    $('inputImportJsonFile')?.click();
+  });
+
+  $('inputImportJsonFile')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        if (parsed && Array.isArray(parsed.trips)) {
+          trips = parsed.trips.map(normalizeTrip).filter(Boolean);
+          if (Array.isArray(parsed.allReviews)) allReviews = parsed.allReviews;
+          if (parsed.privateBudgets && typeof parsed.privateBudgets === 'object') {
+            privateBudgets = { ...privateBudgets, ...parsed.privateBudgets };
+          }
+          saveLocalData();
+          if (isCloudOnline && db) {
+            trips.forEach((t) => syncTripToFirestore(t));
+          }
+          if (currentTripId) {
+            renderDetailView();
+          } else {
+            renderHomeView();
+          }
+          alert(`총 ${trips.length}개의 여행 기록이 복원되었습니다.`);
+        } else {
+          alert('올바른 Travel Journal 백업 파일이 아닙니다.');
+        }
+      } catch (err) {
+        alert('JSON 파일을 읽는 중 오류가 발생했습니다.');
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  });
+
+  $('btnPrintTripReport')?.addEventListener('click', () => {
+    try {
+      window.print();
+    } catch (err) {
+      console.error('인쇄 호출 오류:', err);
+    }
+  });
+});
+

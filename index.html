@@ -17,11 +17,27 @@
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230284c7'/%3E%3Cpath d='M120 330l136-64 136 64-136-24z' fill='%23ffffff'/%3E%3Ccircle cx='256' cy='190' r='54' fill='none' stroke='%23e0f2fe' stroke-width='18'/%3E%3C/svg%3E" />
   <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230284c7'/%3E%3Cpath d='M120 330l136-64 136 64-136-24z' fill='%23ffffff'/%3E%3Ccircle cx='256' cy='190' r='54' fill='none' stroke='%23e0f2fe' stroke-width='18'/%3E%3C/svg%3E" />
 
-  <!-- Tailwind CSS CDN & FontAwesome CDN -->
+  <!-- Tailwind CSS CDN & FontAwesome CDN & Leaflet.js CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
 
   <style>
+    /* Netlify 자동 삽입 하단 배너 강제 숨김 */
+    a[href*="netlify.com"],
+    #netlify-badge,
+    [id*="netlify-"],
+    [class*="netlify-"] {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      height: 0 !important;
+      overflow: hidden !important;
+    }
+
+    /* 모바일 세이프존 여백 확보 및 부드러운 터치 스크롤 */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar {
       -ms-overflow-style: none;
@@ -29,59 +45,74 @@
       -webkit-overflow-scrolling: touch;
       scroll-behavior: smooth;
     }
+
     body {
       -webkit-tap-highlight-color: transparent;
-      padding-bottom: env(safe-area-inset-bottom, 5.5rem);
+      padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 1rem));
     }
+
+    .bottom-nav-safe {
+      padding-bottom: calc(0.4rem + env(safe-area-inset-bottom, 0px));
+    }
+
     .touch-target {
       min-height: 44px;
       min-width: 44px;
     }
+
+    /* Leaflet 지도 컨테이너 기본 높이 */
+    #trip-map {
+      height: 250px;
+      width: 100%;
+      border-radius: 0.875rem;
+      z-index: 10;
+    }
+
+    /* A4 인쇄 / PDF 아카이브 전용 스타일 */
     @media print {
       @page { size: A4 portrait; margin: 14mm 12mm; }
       body { background: #ffffff !important; padding-bottom: 0 !important; }
-      header, nav, button, form, .no-print, .fixed { display: none !important; }
-      #homeView { display: none !important; }
+      header, nav, button, form, .no-print, .fixed, #homeView { display: none !important; }
       #tripDetailView { display: block !important; max-width: 100% !important; padding: 0 !important; }
-      #tabPanelItinerary, #tabPanelBookings, #tabPanelExpenses, #tabPanelReviews { display: block !important; margin-bottom: 24px !important; }
+      #tabPanelItinerary, #tabPanelBookings, #tabPanelExpenses, #tabPanelReviews { display: block !important; margin-bottom: 20px !important; }
       #tabPanelPhotos, #tabPanelChecklist { display: none !important; }
     }
   </style>
 </head>
-<body class="bg-slate-50 text-slate-900 antialiased min-h-screen pb-24 selection:bg-sky-500 selection:text-white">
+<body class="bg-slate-50 text-slate-900 antialiased min-h-screen selection:bg-sky-500 selection:text-white">
 
   <!-- ======================================================================
-       공통 상단 헤더 (연결 상태 배지, 초대 코드 복사, 환율 갱신, 목록 복귀)
+       공통 상단 헤더 (연결 상태 배지, 초대 코드 복사, 환율 갱신, 홈 복귀)
        ====================================================================== -->
   <header class="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200 px-3 py-2.5 shadow-xs">
     <div class="max-w-md mx-auto flex items-center justify-between gap-1.5">
-      <!-- 좌측: 목록 복귀 버튼(상세 진입 시) + 브랜드/여행명 + 연결 상태 배지 -->
+      <!-- 좌측: 홈 복귀 버튼(상세 화면) + 로고/제목 + 연결 상태 배지 -->
       <div class="flex items-center gap-1.5 min-w-0 flex-1">
-        <button id="btnHeaderBackToHome" type="button" class="touch-target hidden px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold flex items-center gap-1 shrink-0 transition" title="여행 목록으로 돌아가기">
-          <i class="fa-solid fa-chevron-left text-[11px]"></i>
-          <span>목록</span>
+        <button id="btnHeaderBackHome" type="button" class="touch-target hidden px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold flex items-center gap-1 shrink-0 transition" title="홈으로 돌아가기">
+          <i class="fa-solid fa-house text-[11px]"></i>
+          <span>홈</span>
         </button>
 
-        <div id="headerBrandIcon" class="w-9 h-9 rounded-xl bg-sky-600 text-white flex items-center justify-center shrink-0 shadow-xs">
-          <i class="fa-solid fa-plane-departure text-sm"></i>
+        <div id="headerLogoIcon" class="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-600 to-indigo-700 text-white flex items-center justify-center shrink-0 shadow-xs">
+          <i class="fa-solid fa-book-atlas text-sm"></i>
         </div>
 
         <div class="min-w-0 flex-1">
-          <h1 id="headerTitleText" class="text-sm font-extrabold tracking-tight text-slate-800 truncate">Travel Journal</h1>
+          <h1 id="headerTitleDisplay" class="text-sm font-extrabold tracking-tight text-slate-800 truncate">Travel Journal</h1>
           <span id="connectionStatusBadge" class="inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
             ⚪ 오프라인
           </span>
         </div>
       </div>
 
-      <!-- 우측: 초대 코드 복사 버튼 + 환율 갱신 버튼 -->
+      <!-- 우측: 초대 코드 복사 버튼 + 실시간 환율 조회 버튼 -->
       <div class="flex items-center gap-1 shrink-0">
         <button id="btnHeaderCopyInvite" type="button" class="touch-target hidden px-2.5 rounded-xl bg-sky-50 border border-sky-200 text-sky-700 hover:bg-sky-100 text-[11px] font-mono font-bold flex items-center gap-1 transition" title="초대 코드 복사">
-          <span id="headerInviteCodeValue">TR-0000</span>
+          <span id="headerInviteCodeText">TR-0000</span>
           <i class="fa-regular fa-copy text-[10px]"></i>
         </button>
 
-        <button id="btnHeaderRefreshRates" type="button" class="touch-target px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 transition" title="실시간 환율 갱신">
+        <button id="btnHeaderRefreshRates" type="button" class="touch-target px-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 transition" title="실시간 환율 조회">
           <i class="fa-solid fa-arrows-rotate text-sky-600"></i>
           <span>환율</span>
         </button>
@@ -90,713 +121,124 @@
   </header>
 
   <!-- ======================================================================
-       [뷰 A] 홈 화면 - 내 여행 보관함 (#homeView)
+       [뷰 A] 홈 화면 (#homeView) - 내 여행 목록 & 전체 리뷰 아카이브
        ====================================================================== -->
   <div id="homeView" class="max-w-md mx-auto px-4 pt-4 space-y-4">
-    <!-- 1. 새 여행 만들기 카드 -->
-    <section class="bg-gradient-to-br from-sky-600 to-slate-900 rounded-2xl p-4 text-white shadow-sm space-y-3">
-      <div class="space-y-1">
-        <span class="text-[10px] font-bold uppercase tracking-wider text-sky-200">All-in-One Travel Archive</span>
-        <h2 class="text-base font-extrabold leading-snug">일정·예약·정산·사진·리뷰까지<br />하나의 여행 노트에 기록하세요</h2>
-      </div>
-      <button id="btnOpenNewTripModal" type="button" class="touch-target w-full py-3 px-4 rounded-xl bg-white hover:bg-sky-50 active:scale-[0.99] text-slate-900 text-xs font-extrabold shadow-xs flex items-center justify-center gap-1.5 transition">
-        <i class="fa-solid fa-plus text-sky-600"></i>
-        <span>새 여행 만들기</span>
+    <!-- 홈 서브 뷰 전환 스위치 (내 여행 목록 vs 전체 리뷰 아카이브) -->
+    <div class="grid grid-cols-2 bg-slate-200/75 p-1 rounded-2xl text-xs font-extrabold text-slate-600">
+      <button id="btnHomeTabTrips" type="button" data-home-view="trips" class="touch-target rounded-xl bg-white text-sky-600 shadow-xs transition flex items-center justify-center gap-1.5">
+        <i class="fa-solid fa-suitcase-rolling"></i>
+        <span>내 여행 목록</span>
       </button>
-    </section>
-
-    <!-- 2. 초대 코드로 참여 입력창 및 버튼 -->
-    <section class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-2.5">
-      <div class="flex items-center justify-between">
-        <h3 class="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
-          <i class="fa-solid fa-ticket text-sky-600"></i>
-          <span>초대 코드로 참여</span>
-        </h3>
-        <span class="text-[10px] text-slate-400">일행과 공용 데이터 실시간 연동</span>
-      </div>
-      <form id="formJoinTripByCode" class="space-y-2">
-        <div class="grid grid-cols-5 gap-2">
-          <input id="inputJoinInviteCode" type="text" placeholder="코드 (TR-XXXX)" class="touch-target col-span-3 uppercase font-mono bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" required />
-          <input id="inputJoinUserNickname" type="text" placeholder="내 이름" class="touch-target col-span-2 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-        <button id="btnSubmitJoinTrip" type="submit" class="touch-target w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 active:scale-[0.99] text-white text-xs font-extrabold transition">
-          초대 코드로 여행 합류하기
-        </button>
-      </form>
-    </section>
-
-    <!-- 3. 진행 중 / 예정된 내 여행 카드 목록 -->
-    <section class="space-y-2.5">
-      <div class="flex items-center justify-between px-1">
-        <h3 class="text-xs font-extrabold text-slate-700">내 여행 목록 <span id="homeTripCountLabel" class="text-sky-600 ml-1">0</span></h3>
-        <span id="headerRateTimestamp" class="text-[10px] text-slate-400">환율 정보 대기 중</span>
-      </div>
-      <div id="homeTripCardsContainer" class="space-y-3"></div>
-    </section>
-  </div>
-
-  <!-- ======================================================================
-       [뷰 B] 여행 상세 화면 (#tripDetailView) - 6개 메인 탭 구성
-       ====================================================================== -->
-  <div id="tripDetailView" class="hidden max-w-md mx-auto px-4 pt-3 space-y-4">
-    <!-- 여행 요약 배너 -->
-    <div class="bg-white rounded-2xl p-3.5 border border-slate-200/80 shadow-2xs flex items-center justify-between gap-2">
-      <div class="min-w-0 flex-1">
-        <div class="flex items-center gap-1.5">
-          <span id="detailDestinationBadge" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100">여행지</span>
-          <span id="detailBaseCurrencyBadge" class="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">KRW</span>
-        </div>
-        <h2 id="detailTripTitle" class="text-sm font-extrabold text-slate-800 truncate mt-1">여행 제목</h2>
-        <p id="detailTripPeriodAndMembers" class="text-[11px] text-slate-500 truncate">2026-11-12 ~ 2026-11-15 · 2명</p>
-      </div>
-      <div class="text-right shrink-0">
-        <span class="text-[10px] text-slate-400 block">내 기준 닉네임</span>
-        <span id="detailMyNicknameLabel" class="text-xs font-extrabold text-sky-700">나</span>
-      </div>
+      <button id="btnHomeTabAllReviews" type="button" data-home-view="reviews" class="touch-target rounded-xl text-slate-500 transition flex items-center justify-center gap-1.5">
+        <i class="fa-solid fa-star text-amber-500"></i>
+        <span>전체 리뷰 아카이브</span>
+      </button>
     </div>
 
-    <!-- ====================================================================
-         탭 1: 일정 (Itinerary - #tabPanelItinerary)
-         ==================================================================== -->
-    <section id="tabPanelItinerary" class="space-y-3">
-      <div class="flex items-center justify-between gap-2">
-        <select id="selectItineraryDay" class="touch-target bg-white border border-slate-200 rounded-xl px-3 text-xs font-extrabold text-slate-700 outline-none focus:border-sky-500">
-          <option value="1">Day 1</option>
-        </select>
-        <button id="btnOpenAddScheduleModal" type="button" class="touch-target px-4 rounded-xl bg-sky-600 hover:bg-sky-700 active:scale-[0.99] text-white text-xs font-extrabold shadow-xs flex items-center gap-1.5 transition">
-          <i class="fa-solid fa-plus"></i>
-          <span>일정 추가</span>
-        </button>
-      </div>
-
-      <div id="itineraryTimelineContainer" class="space-y-2.5"></div>
-    </section>
-
-    <!-- ====================================================================
-         탭 2: 예약 (Bookings - #tabPanelBookings)
-         ==================================================================== -->
-    <section id="tabPanelBookings" class="space-y-3 hidden">
-      <div class="flex items-center justify-between">
-        <div>
-          <h3 class="text-sm font-extrabold text-slate-800">예약 및 바우처 관리</h3>
-          <p class="text-[11px] text-slate-500">항공, 숙소, 렌터카, 티켓·투어 예약번호 통합 보관</p>
-        </div>
-        <button id="btnOpenAddBookingModal" type="button" class="touch-target px-4 rounded-xl bg-sky-600 hover:bg-sky-700 active:scale-[0.99] text-white text-xs font-extrabold shadow-xs flex items-center gap-1.5 transition">
-          <i class="fa-solid fa-plus"></i>
-          <span>예약 추가</span>
-        </button>
-      </div>
-
-      <!-- 예약 카테고리 필터 -->
-      <div id="bookingCategoryFilterBar" class="flex overflow-x-auto no-scrollbar gap-1.5 pb-1">
-        <button type="button" data-booking-filter="전체" class="booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-extrabold bg-slate-800 text-white">전체</button>
-        <button type="button" data-booking-filter="항공" class="booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">항공</button>
-        <button type="button" data-booking-filter="숙소" class="booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">숙소</button>
-        <button type="button" data-booking-filter="렌터카" class="booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">렌터카</button>
-        <button type="button" data-booking-filter="티켓/투어" class="booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">티켓/투어</button>
-      </div>
-
-      <div id="bookingCardsContainer" class="space-y-2.5"></div>
-    </section>
-
-    <!-- ====================================================================
-         탭 3: 지출/정산 (Expenses - #tabPanelExpenses)
-         ==================================================================== -->
-    <section id="tabPanelExpenses" class="space-y-4 hidden">
-      <!-- 개인 예산 현황 카드 (나만 보기) -->
-      <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-3">
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-1.5 flex-wrap">
-            <span class="text-xs font-extrabold px-2 py-0.5 rounded-full bg-sky-100 text-sky-700">개인 예산 현황</span>
-            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700">🔒 나만 보기</span>
-          </div>
-          <button id="btnTogglePrivateBudgetForm" type="button" class="touch-target px-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-sky-600 hover:bg-slate-100 transition">
-            <i class="fa-solid fa-pen-to-square mr-1"></i>예산 수정
-          </button>
-        </div>
-
-        <form id="formUpdatePrivateBudget" class="hidden flex gap-2 pt-1">
-          <input id="inputPrivateBudgetValue" type="number" min="0" step="1000" placeholder="내 개인 예산 (KRW)" class="touch-target flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" required />
-          <button type="submit" class="touch-target px-4 rounded-xl bg-sky-600 text-white text-xs font-extrabold shrink-0">저장</button>
-        </form>
-
-        <div class="grid grid-cols-2 gap-2 pt-1 border-t border-slate-100">
-          <div>
-            <span class="text-[11px] text-slate-500 block">설정 예산</span>
-            <span id="myBudgetTotalText" class="text-base font-extrabold text-slate-800">0 KRW</span>
-          </div>
-          <div class="text-right">
-            <span class="text-[11px] text-slate-500 block">남은 개인 예산</span>
-            <span id="myBudgetRemainText" class="text-base font-extrabold text-sky-600">0 KRW</span>
-          </div>
-        </div>
-
+    <!-- [홈 섹션 1] 내 여행 목록 (#homeTripsSection) -->
+    <div id="homeTripsSection" class="space-y-4">
+      <!-- 새 여행 만들기 히어로 카드 -->
+      <section class="bg-gradient-to-br from-sky-600 via-sky-700 to-slate-900 rounded-2xl p-4 text-white shadow-sm space-y-3">
         <div class="space-y-1">
-          <div class="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-            <div id="myBudgetGaugeBar" class="bg-sky-500 h-full rounded-full transition-all duration-300" style="width: 100%;"></div>
+          <span class="text-[10px] font-bold uppercase tracking-wider text-sky-200">Personal & Group Travel Diary</span>
+          <h2 class="text-base font-extrabold leading-snug">설레는 여정의 모든 기록을<br />한 권의 노트에 담아보세요</h2>
+        </div>
+        <button id="btnOpenNewTripModal" type="button" class="touch-target w-full py-3 px-4 rounded-xl bg-white hover:bg-sky-50 active:scale-[0.99] text-slate-900 text-xs font-extrabold shadow-xs flex items-center justify-center gap-1.5 transition">
+          <i class="fa-solid fa-plus text-sky-600"></i>
+          <span>새 여행 만들기</span>
+        </button>
+      </section>
+
+      <!-- 초대 코드로 참여 카드 -->
+      <section class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-2.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+            <i class="fa-solid fa-ticket text-sky-600"></i>
+            <span>초대 코드로 참여</span>
+          </h3>
+          <span class="text-[10px] text-slate-400">일행과 일정·정산·사진 실시간 공유</span>
+        </div>
+        <form id="formHomeJoinTrip" class="space-y-2">
+          <div class="grid grid-cols-5 gap-2">
+            <input id="inputHomeJoinCode" type="text" placeholder="코드 (TR-XXXX)" class="touch-target col-span-3 uppercase font-mono bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" required />
+            <input id="inputHomeJoinNickname" type="text" placeholder="내 닉네임" class="touch-target col-span-2 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
           </div>
-          <div class="flex justify-between text-[11px] text-slate-500">
-            <span>내 분담 지출액: <strong id="myBudgetSpentText" class="text-slate-700">0 KRW</strong></span>
-            <span id="myBudgetRemainPercent" class="font-bold text-sky-600">잔여 100%</span>
-          </div>
+          <button id="btnSubmitHomeJoin" type="submit" class="touch-target w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-900 active:scale-[0.99] text-white text-xs font-extrabold transition">
+            초대 코드로 여행 합류하기
+          </button>
+        </form>
+      </section>
+
+      <!-- 진행 중 / 예정된 내 여행 카드 목록 -->
+      <section class="space-y-2.5">
+        <div class="flex items-center justify-between px-1">
+          <h3 class="text-xs font-extrabold text-slate-700">내 여행 카드 목록 <span id="homeTripCountBadge" class="text-sky-600 ml-1">0</span></h3>
+          <span id="homeLiveRateSummary" class="text-[10px] text-slate-400">환율 정보 대기 중</span>
         </div>
-      </div>
+        <div id="homeTripCardsList" class="space-y-3"></div>
+      </section>
+    </div>
 
-      <!-- 공용 지출 헤더 + [지출 추가] 버튼 -->
-      <div class="flex items-center justify-between">
-        <div>
-          <h3 class="text-sm font-extrabold text-slate-800">공용 지출 및 1/N 정산</h3>
-          <p class="text-[11px] text-slate-500">실시간 공유 지출 내역</p>
-        </div>
-        <button id="btnOpenAddExpenseModal" type="button" class="touch-target px-4 rounded-xl bg-sky-600 hover:bg-sky-700 active:scale-[0.99] text-white text-xs font-extrabold shadow-xs flex items-center gap-1.5 transition">
-          <i class="fa-solid fa-plus"></i>
-          <span>지출 추가</span>
-        </button>
-      </div>
-
-      <!-- 1/N 정산 요약 카드 -->
-      <div class="bg-slate-900 text-white rounded-2xl p-4 space-y-2.5 shadow-sm">
-        <div class="flex items-center justify-between border-b border-slate-700 pb-2">
-          <span class="text-xs font-extrabold text-sky-300">1/N 최종 정산 요약 (KRW 환산)</span>
-          <span id="groupTotalExpenseKrw" class="text-xs font-bold text-slate-200">총 0원</span>
-        </div>
-        <div id="settlementTransfersContainer" class="space-y-1.5 text-xs"></div>
-      </div>
-
-      <!-- 공용 지출 내역 리스트 -->
-      <div id="expenseListContainer" class="space-y-2.5"></div>
-    </section>
-
-    <!-- ====================================================================
-         탭 4: 사진 (Photos - #tabPanelPhotos)
-         ==================================================================== -->
-    <section id="tabPanelPhotos" class="space-y-3 hidden">
-      <div class="flex items-center justify-between">
-        <div>
-          <h3 class="text-sm font-extrabold text-slate-800">여행 사진 갤러리</h3>
-          <p class="text-[11px] text-slate-500">일차·장소·메모와 함께 기록하는 포토 아카이브</p>
-        </div>
-        <button id="btnOpenAddPhotoModal" type="button" class="touch-target px-4 rounded-xl bg-sky-600 hover:bg-sky-700 active:scale-[0.99] text-white text-xs font-extrabold shadow-xs flex items-center gap-1.5 transition">
-          <i class="fa-solid fa-camera"></i>
-          <span>사진 추가</span>
-        </button>
-      </div>
-
-      <!-- 일차 필터 -->
-      <div class="flex items-center gap-2">
-        <select id="selectPhotoDayFilter" class="touch-target bg-white border border-slate-200 rounded-xl px-3 text-xs font-bold text-slate-700 outline-none focus:border-sky-500">
-          <option value="ALL">전체 일차 보기</option>
-        </select>
-        <span id="photoTotalCountBadge" class="text-[11px] font-semibold text-slate-500">총 0장</span>
-      </div>
-
-      <!-- 사진 그리드 갤러리 -->
-      <div id="photoGalleryGrid" class="grid grid-cols-3 gap-2"></div>
-    </section>
-
-    <!-- ====================================================================
-         탭 5: 리뷰 (Reviews - #tabPanelReviews)
-         ==================================================================== -->
-    <section id="tabPanelReviews" class="space-y-3 hidden">
-      <div class="flex items-center justify-between">
-        <div>
-          <h3 class="text-sm font-extrabold text-slate-800">방문 장소 리뷰 & 평점</h3>
-          <p class="text-[11px] text-slate-500">맛집, 관광지, 숙소 평점 및 재방문 메모</p>
-        </div>
-        <button id="btnOpenAddReviewModal" type="button" class="touch-target px-4 rounded-xl bg-sky-600 hover:bg-sky-700 active:scale-[0.99] text-white text-xs font-extrabold shadow-xs flex items-center gap-1.5 transition">
-          <i class="fa-solid fa-pen-nib"></i>
-          <span>리뷰 작성</span>
-        </button>
-      </div>
-
-      <!-- 리뷰 카테고리 필터 -->
-      <div id="reviewCategoryFilterBar" class="flex overflow-x-auto no-scrollbar gap-1.5 pb-1">
-        <button type="button" data-review-filter="전체" class="review-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-extrabold bg-slate-800 text-white">전체</button>
-        <button type="button" data-review-filter="맛집/카페" class="review-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">맛집/카페</button>
-        <button type="button" data-review-filter="관광지" class="review-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">관광지</button>
-        <button type="button" data-review-filter="숙소" class="review-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">숙소</button>
-        <button type="button" data-review-filter="쇼핑/기타" class="review-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600">쇼핑/기타</button>
-      </div>
-
-      <div id="reviewCardsContainer" class="space-y-3"></div>
-    </section>
-
-    <!-- ====================================================================
-         탭 6: 체크리스트/백업 (Checklist & Backup - #tabPanelChecklist)
-         ==================================================================== -->
-    <section id="tabPanelChecklist" class="space-y-4 hidden">
-      <!-- 준비물 체크리스트 -->
+    <!-- [홈 섹션 2] 전체 리뷰 아카이브 (#homeAllReviewsSection) -->
+    <div id="homeAllReviewsSection" class="space-y-3 hidden">
       <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-3">
         <div class="flex items-center justify-between">
-          <h3 class="text-sm font-extrabold text-slate-800">준비물 체크리스트</h3>
-          <span id="checklistSummaryLabel" class="text-[11px] font-bold text-sky-600">0 / 0 완료</span>
-        </div>
-
-        <form id="formAddChecklistItem" class="flex gap-2">
-          <input id="inputNewChecklistText" type="text" placeholder="준비물 입력 (예: 여권, E-SIM, 상비약)" class="touch-target flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-          <button id="btnAddChecklistSubmit" type="submit" class="touch-target px-4 rounded-xl bg-sky-600 hover:bg-sky-700 text-white text-xs font-extrabold shrink-0 transition">
-            추가
-          </button>
-        </form>
-
-        <div id="checklistItemsContainer" class="space-y-2"></div>
-      </div>
-
-      <!-- 오프라인 JSON 백업 / 복원 & 인쇄 / PDF 저장 -->
-      <div class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs space-y-3">
-        <div>
-          <h3 class="text-sm font-extrabold text-slate-800">백업 및 리포트 출력</h3>
-          <p class="text-[11px] text-slate-500 mt-0.5">여행 전체 데이터를 JSON으로 백업하거나 A4 PDF 리포트로 인쇄합니다.</p>
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
-          <button id="btnExportJsonData" type="button" class="touch-target py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-extrabold flex items-center justify-center gap-1.5 transition">
-            <i class="fa-solid fa-download"></i>
-            <span>JSON 내보내기</span>
-          </button>
-          <button id="btnImportJsonTrigger" type="button" class="touch-target py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-extrabold flex items-center justify-center gap-1.5 transition">
-            <i class="fa-solid fa-upload"></i>
-            <span>JSON 불러오기</span>
-          </button>
-          <input id="inputImportJsonFile" type="file" accept=".json" class="hidden" />
-        </div>
-
-        <button id="btnPrintTripReport" type="button" class="touch-target w-full py-3 px-4 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-800 text-xs font-extrabold flex items-center justify-center gap-1.5 transition">
-          <i class="fa-solid fa-print"></i>
-          <span>여행 리포트 인쇄 / PDF 저장</span>
-        </button>
-      </div>
-    </section>
-
-    <!-- ====================================================================
-         하단 고정 6개 메인 탭바 (모바일 가로 스크롤 및 터치 최적화)
-         ==================================================================== -->
-    <nav class="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur-md border-t border-slate-200 px-2 py-1.5">
-      <div class="max-w-md mx-auto flex overflow-x-auto no-scrollbar gap-1">
-        <button type="button" data-main-tab="itinerary" class="main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-xl bg-sky-50 text-sky-600 font-extrabold text-[11px] transition">
-          <i class="fa-solid fa-calendar-days text-sm mb-0.5"></i>
-          <span>일정</span>
-        </button>
-        <button type="button" data-main-tab="bookings" class="main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 font-bold text-[11px] transition">
-          <i class="fa-solid fa-ticket text-sm mb-0.5"></i>
-          <span>예약</span>
-        </button>
-        <button type="button" data-main-tab="expenses" class="main-tab-btn touch-target flex-1 min-w-[64px] flex flex-col items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 font-bold text-[11px] transition">
-          <i class="fa-solid fa-wallet text-sm mb-0.5"></i>
-          <span>지출/정산</span>
-        </button>
-        <button type="button" data-main-tab="photos" class="main-tab-btn touch-target flex-1 min-w-[56px] flex flex-col items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 font-bold text-[11px] transition">
-          <i class="fa-solid fa-images text-sm mb-0.5"></i>
-          <span>사진</span>
-        </button>
-        <button type="button" data-main-tab="reviews" class="main-tab-btn touch-target flex-1 min-w-[56px] flex flex-col items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 font-bold text-[11px] transition">
-          <i class="fa-solid fa-star text-sm mb-0.5"></i>
-          <span>리뷰</span>
-        </button>
-        <button type="button" data-main-tab="checklist" class="main-tab-btn touch-target flex-1 min-w-[64px] flex flex-col items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 font-bold text-[11px] transition">
-          <i class="fa-solid fa-list-check text-sm mb-0.5"></i>
-          <span>체크/백업</span>
-        </button>
-      </div>
-    </nav>
-  </div>
-
-  <!-- ======================================================================
-       [모달 1] 새 여행 만들기 모달 (#modalNewTrip)
-       ====================================================================== -->
-  <div id="modalNewTrip" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto no-scrollbar shadow-xl">
-      <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
-        <h3 class="text-sm font-extrabold text-slate-800">새 여행 만들기</h3>
-        <button type="button" data-close-modal="modalNewTrip" class="touch-target flex items-center justify-center text-slate-400 hover:text-slate-600">
-          <i class="fa-solid fa-xmark text-lg"></i>
-        </button>
-      </div>
-
-      <form id="formCreateNewTrip" class="space-y-3">
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">여행 제목</label>
-          <input id="inputNewTripTitle" type="text" placeholder="예: 돗토리·시마네 온천 여행" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">여행지 (도시 / 국가)</label>
-          <input id="inputNewTripDestination" type="text" placeholder="예: 일본 요나고·마쓰에" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
           <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">시작일</label>
-            <input id="inputNewTripStartDate" type="date" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
+            <h2 class="text-sm font-extrabold text-slate-800">전체 여행 방문 리뷰 아카이브</h2>
+            <p class="text-[11px] text-slate-500">모든 여행에서 기록한 맛집·숙소·관광지 후기 통합 피드</p>
           </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">종료일</label>
-            <input id="inputNewTripEndDate" type="date" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-          </div>
+          <span id="archiveTotalReviewCount" class="text-xs font-extrabold px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200">총 0건</span>
         </div>
 
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">기본 통화</label>
-            <select id="selectNewTripCurrency" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
-              <option value="KRW">KRW (원)</option>
-              <option value="JPY">JPY (엔)</option>
-              <option value="USD">USD (달러)</option>
-              <option value="EUR">EUR (유로)</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">내 개인 예산 (KRW)</label>
-            <input id="inputNewTripMyBudget" type="number" min="0" step="1000" value="1500000" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
-          </div>
-        </div>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">동행자 이름 목록 (첫 번째가 내 이름, 쉼표 구분)</label>
-          <input id="inputNewTripMembers" type="text" value="나, 동행1" placeholder="예: 나, 치원, 민수" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-
-        <div class="pt-2 flex justify-end gap-2">
-          <button type="button" data-close-modal="modalNewTrip" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
-          <button id="btnSubmitCreateNewTrip" type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">여행 생성</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- ======================================================================
-       [모달 2] 일정 추가 모달 (#modalAddSchedule)
-       ====================================================================== -->
-  <div id="modalAddSchedule" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 shadow-xl">
-      <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
-        <h3 class="text-sm font-extrabold text-slate-800">일정 추가</h3>
-        <button type="button" data-close-modal="modalAddSchedule" class="touch-target flex items-center justify-center text-slate-400 hover:text-slate-600">
-          <i class="fa-solid fa-xmark text-lg"></i>
-        </button>
-      </div>
-
-      <form id="formCreateSchedule" class="space-y-3">
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">일차</label>
-            <select id="selectModalScheduleDay" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
-              <option value="1">Day 1</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">시간</label>
-            <input id="inputModalScheduleTime" type="time" value="10:00" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" required />
-          </div>
-        </div>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">장소 / 일정명</label>
-          <input id="inputModalSchedulePlace" type="text" placeholder="예: 아다치 미술관" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">이동 수단 및 메모</label>
-          <input id="inputModalScheduleMemo" type="text" placeholder="예: 무료 셔틀버스 탑승 (야스기역 출발)" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" />
-        </div>
-
-        <div class="pt-2 flex justify-end gap-2">
-          <button type="button" data-close-modal="modalAddSchedule" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
-          <button id="btnSubmitCreateSchedule" type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">저장</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- ======================================================================
-       [모달 3] 예약 추가 모달 (#modalAddBooking)
-       ====================================================================== -->
-  <div id="modalAddBooking" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto no-scrollbar shadow-xl">
-      <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
-        <h3 class="text-sm font-extrabold text-slate-800">예약 내역 등록</h3>
-        <button type="button" data-close-modal="modalAddBooking" class="touch-target flex items-center justify-center text-slate-400 hover:text-slate-600">
-          <i class="fa-solid fa-xmark text-lg"></i>
-        </button>
-      </div>
-
-      <form id="formCreateBooking" class="space-y-3">
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">예약 카테고리</label>
-            <select id="selectBookingCategory" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
-              <option value="항공">항공</option>
-              <option value="숙소">숙소</option>
-              <option value="렌터카">렌터카</option>
-              <option value="티켓/투어">티켓/투어</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">이용 날짜</label>
-            <input id="inputBookingDate" type="date" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs font-medium outline-none focus:border-sky-500" required />
-          </div>
-        </div>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">예약명 (항공사/편명, 숙소명, 업체명)</label>
-          <input id="inputBookingTitle" type="text" placeholder="예: 에어서울 RS471 (인천 ➔ 요나고)" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">이용 시간</label>
-            <input id="inputBookingTime" type="time" value="13:20" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" />
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">예약번호 / PNR</label>
-            <input id="inputBookingCode" type="text" placeholder="예: X7K9P2" class="touch-target w-full uppercase font-mono bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
-          </div>
-        </div>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">바우처 및 상세 메모</label>
-          <textarea id="inputBookingMemo" rows="2" placeholder="체크인 15:00, 조식 포함, 픽업 장소 안내 등" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-medium outline-none focus:border-sky-500"></textarea>
-        </div>
-
-        <div class="pt-2 flex justify-end gap-2">
-          <button type="button" data-close-modal="modalAddBooking" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
-          <button id="btnSubmitCreateBooking" type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">예약 저장</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- ======================================================================
-       [모달 4] 지출 추가 모달 (#modalAddExpense)
-       ====================================================================== -->
-  <div id="modalAddExpense" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto no-scrollbar shadow-xl">
-      <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
-        <h3 class="text-sm font-extrabold text-slate-800">지출 내역 추가</h3>
-        <button type="button" data-close-modal="modalAddExpense" class="touch-target flex items-center justify-center text-slate-400 hover:text-slate-600">
-          <i class="fa-solid fa-xmark text-lg"></i>
-        </button>
-      </div>
-
-      <form id="formCreateExpense" class="space-y-3">
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">지출 항목명</label>
-          <input id="inputExpTitle" type="text" placeholder="예: 가이세키 저녁, 고속도로 통행료" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-
-        <!-- 통화 선택 (KRW/JPY/USD/EUR) 및 결제 금액 -->
+        <!-- 검색어 입력 + 별점순 정렬 -->
         <div class="grid grid-cols-3 gap-2">
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">통화</label>
-            <select id="selectExpCurrency" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs font-extrabold outline-none focus:border-sky-500">
-              <option value="KRW">KRW</option>
-              <option value="JPY">JPY</option>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
-            </select>
+          <div class="col-span-2 relative">
+            <i class="fa-solid fa-magnifying-glass text-xs text-slate-400 absolute left-3 top-1/2 -translate-y-1/2"></i>
+            <input id="inputArchiveReviewSearch" type="text" placeholder="장소명, 여행명, 키워드 검색..." class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl pl-8 pr-3 text-xs font-medium outline-none focus:border-sky-500" />
           </div>
-          <div class="col-span-2">
-            <label class="text-xs font-semibold text-slate-600 block mb-1">결제 금액</label>
-            <input id="inputExpAmount" type="number" step="any" min="0" placeholder="0" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-sm font-bold outline-none focus:border-sky-500" required />
-          </div>
+          <select id="selectArchiveReviewSort" class="touch-target bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs font-bold text-slate-700 outline-none focus:border-sky-500">
+            <option value="ratingDesc">별점 높은순</option>
+            <option value="latest">최신 등록순</option>
+            <option value="ratingAsc">별점 낮은순</option>
+          </select>
         </div>
 
-        <!-- 최신 환율 불러오기 버튼 + 적용 환율 입력칸 + 원화 환산 실시간 미리보기 -->
-        <div class="bg-sky-50 border border-sky-100 rounded-xl p-3 space-y-2">
-          <div class="flex items-center justify-between gap-2">
-            <span id="expRateStatusText" class="text-[11px] font-bold text-sky-900">매매기준율 (KRW 환산)</span>
-            <button id="btnFetchLatestExchangeRate" type="button" class="px-2.5 py-1.5 bg-white border border-sky-200 hover:bg-sky-100 text-sky-700 rounded-lg text-[11px] font-extrabold shrink-0 transition">
-              최신 환율 불러오기 🔄
-            </button>
-          </div>
-
-          <div class="flex items-center gap-2">
-            <span id="expRateUnitPrefix" class="text-xs font-mono font-bold text-slate-600 shrink-0">1 KRW =</span>
-            <input id="inputExpAppliedRate" type="number" step="any" min="0" value="1" class="touch-target flex-1 bg-white border border-slate-200 rounded-lg px-2.5 text-xs font-mono font-bold text-slate-800 outline-none focus:border-sky-500" required />
-            <span class="text-xs font-mono font-bold text-slate-600 shrink-0">KRW</span>
-          </div>
-
-          <div class="flex items-center justify-between text-xs text-sky-900 pt-1 border-t border-sky-100">
-            <span class="font-semibold">원화 환산 미리보기</span>
-            <strong id="expConvertedKrwPreview" class="text-sm font-extrabold text-sky-700">0 KRW</strong>
-          </div>
+        <!-- 카테고리 필터 (전체, 숙소, 식당, 관광지, 쇼핑, 기타) -->
+        <div id="archiveReviewCategoryBar" class="flex overflow-x-auto no-scrollbar gap-1.5 pb-0.5">
+          <button type="button" data-archive-cat="전체" class="archive-cat-btn touch-target shrink-0 px-3 rounded-xl text-xs font-extrabold bg-slate-800 text-white">전체</button>
+          <button type="button" data-archive-cat="숙소" class="archive-cat-btn touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">숙소</button>
+          <button type="button" data-archive-cat="식당" class="archive-cat-btn touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">식당</button>
+          <button type="button" data-archive-cat="관광지" class="archive-cat-btn touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">관광지</button>
+          <button type="button" data-archive-cat="쇼핑" class="archive-cat-btn touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">쇼핑</button>
+          <button type="button" data-archive-cat="기타" class="archive-cat-btn touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-slate-100 text-slate-600">기타</button>
         </div>
-
-        <!-- 결제자 선택 -->
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">결제자</label>
-          <select id="selectExpPayer" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500"></select>
-        </div>
-
-        <!-- 분담 인원 체크박스 영역 -->
-        <div>
-          <div class="flex items-center justify-between mb-1">
-            <label class="text-xs font-semibold text-slate-600">분담 인원 선택 (1/N 균등 정산)</label>
-            <span class="text-[10px] text-slate-400">1명만 선택 시 개인 지출</span>
-          </div>
-          <div id="expParticipantsCheckboxGroup" class="space-y-1.5 bg-slate-50 p-3 rounded-xl border border-slate-200"></div>
-        </div>
-
-        <div class="pt-2 flex justify-end gap-2">
-          <button type="button" data-close-modal="modalAddExpense" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
-          <button id="btnSubmitCreateExpense" type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">지출 저장</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- ======================================================================
-       [모달 5] 사진 추가 모달 (#modalAddPhoto)
-       ====================================================================== -->
-  <div id="modalAddPhoto" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto no-scrollbar shadow-xl">
-      <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
-        <h3 class="text-sm font-extrabold text-slate-800">여행 사진 기록 추가</h3>
-        <button type="button" data-close-modal="modalAddPhoto" class="touch-target flex items-center justify-center text-slate-400 hover:text-slate-600">
-          <i class="fa-solid fa-xmark text-lg"></i>
-        </button>
       </div>
 
-      <form id="formCreatePhoto" class="space-y-3">
-        <!-- 사진 파일 선택 (카메라 촬영 및 앨범 선택 지원) -->
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">사진 파일 선택 / 카메라 촬영</label>
-          <input id="inputPhotoFile" type="file" accept="image/*" class="touch-target w-full text-xs text-slate-600 file:mr-3 file:py-2.5 file:px-3.5 file:rounded-xl file:border-0 file:text-xs file:font-extrabold file:bg-sky-50 file:text-sky-700 hover:file:bg-sky-100" required />
-        </div>
-
-        <!-- 선택한 이미지 실시간 미리보기 영역 -->
-        <div id="photoPreviewWrapper" class="hidden rounded-xl overflow-hidden border border-slate-200 bg-slate-100 aspect-video flex items-center justify-center">
-          <img id="imgPhotoUploadPreview" src="" alt="사진 미리보기" class="w-full h-full object-cover" />
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">촬영 일차</label>
-            <select id="selectPhotoDay" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
-              <option value="1">Day 1</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">촬영 날짜</label>
-            <input id="inputPhotoDate" type="date" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 text-xs font-medium outline-none focus:border-sky-500" />
-          </div>
-        </div>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">장소명</label>
-          <input id="inputPhotoPlace" type="text" placeholder="예: 마쓰에성 천수각" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">한줄 메모</label>
-          <input id="inputPhotoMemo" type="text" placeholder="예: 해질녘 호수 풍경이 정말 멋졌던 곳" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" />
-        </div>
-
-        <div class="pt-2 flex justify-end gap-2">
-          <button type="button" data-close-modal="modalAddPhoto" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
-          <button id="btnSubmitCreatePhoto" type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">사진 저장</button>
-        </div>
-      </form>
+      <!-- 통합 리뷰 피드 리스트 -->
+      <div id="archiveReviewFeedContainer" class="space-y-3"></div>
     </div>
   </div>
 
   <!-- ======================================================================
-       [모달 5-1] 사진 크게 보기 모달 (#modalViewPhoto)
+       [뷰 B] 여행 상세 화면 (#tripDetailView) - 6개 메인 탭
        ====================================================================== -->
-  <div id="modalViewPhoto" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm flex flex-col justify-between p-4 hidden">
-    <div class="max-w-md w-full mx-auto flex items-center justify-between text-white">
+  <div id="tripDetailView" class="hidden max-w-md mx-auto px-4 pt-3 space-y-4">
+    <!-- 여행 요약 및 수정 배너 -->
+    <div class="bg-white rounded-2xl p-3.5 border border-slate-200/80 shadow-2xs flex items-center justify-between gap-2">
       <div class="min-w-0 flex-1">
-        <span id="viewPhotoDayAndDate" class="text-[11px] font-bold text-sky-300 block">Day 1</span>
-        <h4 id="viewPhotoPlaceTitle" class="text-sm font-extrabold truncate">장소명</h4>
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <span id="detailTripDestBadge" class="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-sky-50 text-sky-700 border border-sky-100">여행지</span>
+          <span id="detailTripCurrencyBadge" class="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">KRW</span>
+          <span id="detailMyRoleBadge" class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-100">나: 나</span>
+        </div>
+        <h2 id="detailTripTitle" class="text-sm font-extrabold text-slate-800 truncate mt-1">여행 제목</h2>
+        <p id="detailTripSubtitle" class="text-[11px] text-slate-500 truncate">2026-11-12 ~ 2026-11-15 · 2명</p>
       </div>
-      <div class="flex items-center gap-1.5 shrink-0">
-        <button id="btnDeleteViewingPhoto" type="button" class="touch-target flex items-center justify-center rounded-xl text-rose-400 hover:bg-white/10 transition" title="사진 삭제">
-          <i class="fa-solid fa-trash-can text-base"></i>
-        </button>
-        <button type="button" data-close-modal="modalViewPhoto" class="touch-target flex items-center justify-center rounded-xl text-slate-300 hover:text-white transition" title="닫기">
-          <i class="fa-solid fa-xmark text-xl"></i>
-        </button>
-      </div>
+      <button id="btnOpenEditTripModal" type="button" class="touch-target px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 shrink-0 transition" title="여행 정보 수정">
+        <i class="fa-solid fa-gear"></i>
+        <span>수정</span>
+      </button>
     </div>
 
-    <div class="flex-1 flex items-center justify-center p-2">
-      <img id="viewPhotoFullImg" src="" alt="크게 보기" class="max-w-full max-h-[68vh] object-contain rounded-xl shadow-2xl" />
-    </div>
-
-    <div class="max-w-md w-full mx-auto bg-slate-800/90 border border-slate-700 rounded-xl p-3.5 text-white">
-      <p id="viewPhotoMemoText" class="text-xs text-slate-200 leading-relaxed">메모 내용</p>
-    </div>
-  </div>
-
-  <!-- ======================================================================
-       [모달 6] 리뷰 작성 모달 (#modalAddReview)
-       ====================================================================== -->
-  <div id="modalAddReview" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">
-    <div class="bg-white rounded-2xl max-w-sm w-full p-5 space-y-4 max-h-[90vh] overflow-y-auto no-scrollbar shadow-xl">
-      <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
-        <h3 class="text-sm font-extrabold text-slate-800">방문 장소 리뷰 작성</h3>
-        <button type="button" data-close-modal="modalAddReview" class="touch-target flex items-center justify-center text-slate-400 hover:text-slate-600">
-          <i class="fa-solid fa-xmark text-lg"></i>
-        </button>
-      </div>
-
-      <form id="formCreateReview" class="space-y-3">
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">장소 / 가게명</label>
-          <input id="inputReviewPlaceName" type="text" placeholder="예: 카이 이즈모, 이즈모 소바 카네야" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-        </div>
-
-        <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">카테고리</label>
-            <select id="selectReviewCategory" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
-              <option value="맛집/카페">맛집/카페</option>
-              <option value="관광지">관광지</option>
-              <option value="숙소">숙소</option>
-              <option value="쇼핑/기타">쇼핑/기타</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-600 block mb-1">방문 일차</label>
-            <select id="selectReviewDay" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
-              <option value="1">Day 1</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- 별점 1~5점 선택 UI -->
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">만족도 별점 (1~5점)</label>
-          <input id="inputReviewRatingValue" type="hidden" value="5" />
-          <div id="reviewStarRatingGroup" class="grid grid-cols-5 gap-1.5">
-            <button type="button" data-star-val="1" class="star-rate-btn touch-target rounded-xl border border-amber-300 bg-amber-50 text-amber-500 text-xs font-extrabold">★ 1</button>
-            <button type="button" data-star-val="2" class="star-rate-btn touch-target rounded-xl border border-amber-300 bg-amber-50 text-amber-500 text-xs font-extrabold">★ 2</button>
-            <button type="button" data-star-val="3" class="star-rate-btn touch-target rounded-xl border border-amber-300 bg-amber-50 text-amber-500 text-xs font-extrabold">★ 3</button>
-            <button type="button" data-star-val="4" class="star-rate-btn touch-target rounded-xl border border-amber-300 bg-amber-50 text-amber-500 text-xs font-extrabold">★ 4</button>
-            <button type="button" data-star-val="5" class="star-rate-btn touch-target rounded-xl border border-amber-400 bg-amber-400 text-white text-xs font-extrabold shadow-2xs">★ 5</button>
-          </div>
-        </div>
-
-        <!-- 재방문 의사 체크 -->
-        <label class="touch-target flex items-center gap-2.5 bg-slate-50 border border-slate-200 rounded-xl px-3 cursor-pointer">
-          <input id="chkReviewRevisit" type="checkbox" checked class="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
-          <span class="text-xs font-bold text-slate-700">다음 여행에도 재방문 의사 있음 👍</span>
-        </label>
-
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">상세 리뷰 내용</label>
-          <textarea id="inputReviewContent" rows="3" placeholder="추천 메뉴, 룸 컨디션, 웨이팅 팁, 분위기 등을 자유롭게 기록하세요." class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-medium outline-none focus:border-sky-500" required></textarea>
-        </div>
-
-        <div class="pt-2 flex justify-end gap-2">
-          <button type="button" data-close-modal="modalAddReview" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
-          <button id="btnSubmitCreateReview" type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">리뷰 저장</button>
-        </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- ES Module 앱 스크립트 연결 -->
-  <script type="module" src="app.js"></script>
-</body>
-</html>
+    

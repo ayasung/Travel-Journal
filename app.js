@@ -2815,9 +2815,7 @@ function bindAllUiEvents() {
       const text = ($('inputNewChecklistText')?.value || '').trim();
       if (!text) return;
 
-      if (currentChecklistSubTab ===
-                  'shopping'
-      ) {
+      if (currentChecklistSubTab === 'shopping') {
         const expectedPrice = Number($('inputShoppingExpectedPrice')?.value) || 0;
         if (!Array.isArray(trip.shoppingList)) trip.shoppingList = [];
         trip.shoppingList.unshift({

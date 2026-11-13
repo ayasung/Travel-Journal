@@ -1,4 +1,4 @@
-const CACHE_NAME = 'travel-journal-v1';
+const CACHE_NAME = 'travel-journal-v2';
 
 const APP_SHELL_FILES = [
   './',

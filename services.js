@@ -1,14 +1,16 @@
-// ============================================================================
-// [1. 설정 상수] 실제 AirLabs API 키 적용
-// ============================================================================
+/**
+ * Travel Journal PWA - services.js (ES Module)
+ * - 실시간 환율 조회 (이중 백업 API + 엔화 100엔 단위 변환)
+ * - 항공편 조회 (AirLabs API + 한국 공항·항공사 한글 매핑 + 내장 DB Fallback)
+ * - 장소 좌표 변환(Geocoding) 및 거리 계산(Haversine)
+ * - HTML5 Canvas 이미지 리사이징·Base64 압축 및 1/N 정산 계산기
+ */
+
 export const AIRLABS_API_KEY = 'dc8d88c8-6aa7-4aee-b549-e9d291f1f2a2';
 
-// ============================================================================
-// [2. 기본 기준 환율 테이블] (1 외화 단위당 KRW 기준 오프라인 Fallback)
-// ============================================================================
 export const FALLBACK_RATES_TO_KRW = {
   KRW: 1,
-  JPY: 9.15,   // 1 JPY = 9.15 KRW (100 JPY = 915 KRW)
+  JPY: 9.15,
   USD: 1380.0,
   EUR: 1490.0,
   GBP: 1750.0,
@@ -20,12 +22,9 @@ export const FALLBACK_RATES_TO_KRW = {
 
 const cachedRatesToKrw = { ...FALLBACK_RATES_TO_KRW };
 
-// ============================================================================
-// [3. 실시간 환율 조회 서비스] (이중 백업 + 엔화 100엔 기준 표시 정보 포함)
-// - 1순위: https://open.er-api.com/v6/latest/{통화코드}
-// - 2순위: https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{소문자통화코드}.json
-// - 3순위: 내장 오프라인 매매기준율 Fallback
-// ============================================================================
+/**
+ * 실시간 환율 조회 (1순위: open.er-api.com -> 2순위: currency-api -> 3순위: 오프라인 기본값)
+ */
 export async function fetchLiveExchangeRate(currencyCode) {
   const upper = String(currencyCode || 'KRW').trim().toUpperCase();
   if (upper === 'KRW') {
@@ -41,7 +40,6 @@ export async function fetchLiveExchangeRate(currencyCode) {
   let unitRate = null;
   let sourceName = '기본 환율';
 
-  // 1순위 API 호출: open.er-api.com
   try {
     const res1 = await fetch(`https://open.er-api.com/v6/latest/${encodeURIComponent(upper)}`);
     if (res1.ok) {
@@ -53,10 +51,9 @@ export async function fetchLiveExchangeRate(currencyCode) {
       }
     }
   } catch (err) {
-    console.warn(`1순위 환율 API 호출 실패 (${upper}):`, err);
+    console.warn(`1순위 환율 API 실패 (${upper}):`, err);
   }
 
-  // 2순위 API 호출: fawazahmed0 currency-api
   if (unitRate === null) {
     try {
       const lower = upper.toLowerCase();
@@ -72,17 +69,15 @@ export async function fetchLiveExchangeRate(currencyCode) {
         }
       }
     } catch (err) {
-      console.warn(`2순위 환율 API 호출 실패 (${upper}):`, err);
+      console.warn(`2순위 환율 API 실패 (${upper}):`, err);
     }
   }
 
-  // 3순위 Fallback
   if (unitRate === null) {
     unitRate = cachedRatesToKrw[upper] || 1;
     sourceName = '오프라인 기본값';
   }
 
-  // 엔화(JPY)는 100엔 기준 환율과 1엔 단위 환율을 모두 정밀 계산
   const roundedUnitRate = upper === 'VND' ? Number(unitRate.toFixed(4)) : Number(unitRate.toFixed(2));
   const ratePer100 = Number((unitRate * 100).toFixed(2));
   cachedRatesToKrw[upper] = roundedUnitRate;
@@ -94,21 +89,20 @@ export async function fetchLiveExchangeRate(currencyCode) {
 
   return {
     currency: upper,
-    rate: roundedUnitRate,      // 1단위당 원화 환율 (지출 금액 × rate 계산용)
-    ratePer100,                 // 100단위당 원화 환율 (엔화 100엔 표기용)
-    displayUnit,                // UI 표시용 텍스트
+    rate: roundedUnitRate,
+    ratePer100,
+    displayUnit,
     source: sourceName
   };
 }
 
-// app.js 호환용 별칭 export
 export const fetchLiveRateToKrw = fetchLiveExchangeRate;
 
 export async function refreshMajorRates(targets = ['JPY', 'USD', 'EUR']) {
-  const results = await Promise.all(targets.map((code) => fetchLiveExchangeRate(code)));
+  const details = await Promise.all(targets.map((code) => fetchLiveExchangeRate(code)));
   return {
     rates: { ...cachedRatesToKrw },
-    details: results
+    details
   };
 }
 
@@ -117,9 +111,6 @@ export function getCachedRateToKrw(currencyCode) {
   return cachedRatesToKrw[upper] || 1;
 }
 
-// ============================================================================
-// [4. 항공편 조회 서비스] (한국 공항·항공사 한글 매핑 + AirLabs API + 내장 DB Fallback)
-// ============================================================================
 export const AIRLINE_KO_MAP = {
   RS: '에어서울',
   KE: '대한항공',
@@ -243,7 +234,6 @@ export async function lookupFlightWithAirLabs(flightCodeInput) {
   const prefix = code.substring(0, 2);
   const mappedAirlineKo = AIRLINE_KO_MAP[prefix] || '';
 
-  // 1) AirLabs 실시간 API 호출
   if (AIRLABS_API_KEY && AIRLABS_API_KEY.trim() !== '') {
     try {
       const apiUrl = `https://airlabs.co/api/v9/flight?flight_iata=${encodeURIComponent(code)}&api_key=${encodeURIComponent(AIRLABS_API_KEY.trim())}`;
@@ -287,11 +277,10 @@ export async function lookupFlightWithAirLabs(flightCodeInput) {
         }
       }
     } catch (err) {
-      console.warn('AirLabs API 호출 실패, 내장 항공편 DB로 폴백:', err);
+      console.warn('AirLabs API 호출 실패, 내장 DB로 폴백:', err);
     }
   }
 
-  // 2) 내장 항공편 스케줄 DB 조회
   const localHit = LOCAL_FLIGHT_SCHEDULE_DB[code];
   if (localHit) {
     return {
@@ -308,7 +297,6 @@ export async function lookupFlightWithAirLabs(flightCodeInput) {
     };
   }
 
-  // 3) 항공사 2글자 코드만 매칭된 경우
   if (mappedAirlineKo) {
     return {
       flightNo: code,
@@ -327,23 +315,19 @@ export async function lookupFlightWithAirLabs(flightCodeInput) {
   return null;
 }
 
-// app.js 호환용 별칭 export
 export const lookupFlightInfo = lookupFlightWithAirLabs;
 
-// ============================================================================
-// [5. 장소 좌표 변환(Geocoding) 및 두 좌표 간 거리 계산(Haversine) 서비스]
-// ============================================================================
 const PLACE_COORDS_CACHE = {
   인천국제공항: { lat: 37.4602, lng: 126.4407, displayName: '인천국제공항 (ICN)' },
   김포국제공항: { lat: 37.5583, lng: 126.7906, displayName: '김포국제공항 (GMP)' },
   요나고공항: { lat: 35.4922, lng: 133.2364, displayName: '요나고 기타로 공항 (YGJ)' },
   요나고: { lat: 35.4281, lng: 133.3309, displayName: '일본 돗토리현 요나고시' },
-  사카이미나토: { lat: 35.5457, lng: 133.2319, displayName: '일본 사카이미나토 (미즈키 시게루 로드)' },
+  사카이미나토: { lat: 35.5457, lng: 133.2319, displayName: '일본 사카이미나토' },
   마쓰에: { lat: 35.4681, lng: 133.0484, displayName: '일본 시마네현 마쓰에시' },
   마쓰에성: { lat: 35.4751, lng: 133.0507, displayName: '마쓰에성 천수각' },
   아다치미술관: { lat: 35.3775, lng: 133.1904, displayName: '아다치 미술관 (야스기)' },
-  이즈모타이샤: { lat: 35.4020, lng: 132.6853, displayName: '이즈모 대사 (이즈모타이샤)' },
-  다이센: { lat: 35.3711, lng: 133.5389, displayName: '다이센 산 (돗토리)' },
+  이즈모타이샤: { lat: 35.4020, lng: 132.6853, displayName: '이즈모 대사' },
+  다이센: { lat: 35.3711, lng: 133.5389, displayName: '다이센 산' },
   돗토리사구: { lat: 35.5401, lng: 134.2286, displayName: '돗토리 사구' },
   도쿄타워: { lat: 35.6586, lng: 139.7454, displayName: '도쿄 타워' },
   아사쿠사: { lat: 35.7148, lng: 139.7967, displayName: '도쿄 아사쿠사 센소지' },
@@ -358,7 +342,6 @@ export async function geocodePlace(placeQuery) {
   const clean = String(placeQuery || '').trim();
   if (!clean) return null;
 
-  // 1) 3자리 공항 IATA 코드 포함 여부 먼저 확인
   const upper = clean.toUpperCase();
   const codeMatches = upper.match(/\b[A-Z]{3}\b/g) || [];
   for (const code of codeMatches) {
@@ -372,7 +355,6 @@ export async function geocodePlace(placeQuery) {
     }
   }
 
-  // 2) 내장 주요 관광지/도시 캐시 매칭
   const compactKey = clean.replace(/\s+/g, '');
   for (const key of Object.keys(PLACE_COORDS_CACHE)) {
     if (compactKey.includes(key) || key.includes(compactKey)) {
@@ -380,7 +362,6 @@ export async function geocodePlace(placeQuery) {
     }
   }
 
-  // 3) OpenStreetMap Nominatim 무료 지오코딩 API 호출
   try {
     const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(clean)}`;
     const res = await fetch(url, {
@@ -408,7 +389,7 @@ export async function geocodePlace(placeQuery) {
 
 export function calcDistance(lat1, lng1, lat2, lng2) {
   const toRad = (deg) => (deg * Math.PI) / 180;
-  const R = 6371; // 지구 반지름 (km)
+  const R = 6371;
   const dLat = toRad(lat2 - lat1);
   const dLng = toRad(lng2 - lng1);
   const a =
@@ -418,9 +399,6 @@ export function calcDistance(lat1, lng1, lat2, lng2) {
   return Number((R * c).toFixed(1));
 }
 
-// ============================================================================
-// [6. 이미지 리사이징·압축 및 1/N 정산 보조 유틸리티]
-// ============================================================================
 export function compressImageFileToBase64(file, maxWidth = 800, quality = 0.7) {
   return new Promise((resolve, reject) => {
     if (!file) {

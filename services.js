@@ -2,7 +2,7 @@
  * Travel Journal PWA - services.js (ES Module)
  * - 실시간 환율 조회 (이중 백업 API + 엔화 100엔 단위 변환)
  * - 항공편 조회 (AirLabs API + 한국 공항·항공사 한글 매핑 + 내장 DB Fallback)
- * - 장소 좌표 변환(Geocoding) 및 거리 계산(Haversine)
+ * - 장소 좌표 변환(Geocoding) 및 거리 계산(Haversine) - IATA 공항 좌표 최적화 포함
  * - HTML5 Canvas 이미지 리사이징·Base64 압축 및 1/N 정산 계산기
  */
 

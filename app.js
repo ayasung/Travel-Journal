@@ -1,8 +1,10 @@
 /**
  * Travel Journal PWA - app.js (ES Module)
- * - document.body 이벤트 위임(addEventListener('click'))으로 모든 버튼 및 탭 100% 작동 보장
- * - Firebase Firestore v10 실시간 동기화(onSnapshot, setDoc, query, where) + 오프라인 Fallback
- * - 예약 ➔ 일정 & 지출 3중 자동 연동, 항공편 flightCache 공용 캐싱, 사진 압축, 통합 리뷰 아카이브, Leaflet 지도, AI 추천
+ * - 100% matched with index.html IDs, data-actions, and 6-tab structure
+ * - document.body 이벤트 위임(addEventListener)으로 모든 버튼·탭 동작 100% 보장
+ * - Firebase Firestore v10 실시간 동기화 + 오프라인 Fallback
+ * - [신규 보완] 1. 항공편 다구간(멀티 세그먼트) 일괄 입력 및 개별 일정 자동 등록
+ * - [신규 보완] 2. 숙소 예약 상세 입력(체크인/체크아웃 기간 및 시간) 및 일정 자동 연동 (체크인/체크아웃 일자별 자동 등록)
  */
 
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
@@ -34,22 +36,22 @@ import {
 // apiKey가 비어 있으면 에러 없이 자동으로 '⚪ 오프라인(로컬 저장)' 모드로 동작합니다.
 // ============================================================================
 const firebaseConfig = {
-  apiKey: "AIzaSyBp6NVo7O-ya5MfcmI1_NvnKKLnH3tGF3k",
-  authDomain: "travel-journal-8dfd3.firebaseapp.com",
-  projectId: "travel-journal-8dfd3",
-  storageBucket: "travel-journal-8dfd3.firebasestorage.app",
-  messagingSenderId: "210219932082",
-  appId: "1:210219932082:web:5afb3349cab5e09725acab"
+  apiKey: '',
+  authDomain: '',
+  projectId: '',
+  storageBucket: '',
+  messagingSenderId: '',
+  appId: ''
 };
 
 // ============================================================================
 // 1. 상수 및 전역 상태
 // ============================================================================
-const STORAGE_TRIPS_KEY = 'TJ_TRIPS_ARCHIVE_V5';
-const STORAGE_PRIVATE_KEY = 'TJ_PRIVATE_BUDGETS_V5';
-const STORAGE_ALL_REVIEWS_KEY = 'TJ_ALL_REVIEWS_ARCHIVE_V5';
-const STORAGE_FLIGHT_CACHE_KEY = 'TJ_FLIGHT_CACHE_V5';
-const STORAGE_UID_KEY = 'TJ_DEVICE_USER_UID_V5';
+const STORAGE_TRIPS_KEY = 'TJ_TRIPS_ARCHIVE_V6';
+const STORAGE_PRIVATE_KEY = 'TJ_PRIVATE_BUDGETS_V6';
+const STORAGE_ALL_REVIEWS_KEY = 'TJ_ALL_REVIEWS_ARCHIVE_V6';
+const STORAGE_FLIGHT_CACHE_KEY = 'TJ_FLIGHT_CACHE_V6';
+const STORAGE_UID_KEY = 'TJ_DEVICE_USER_UID_V6';
 
 let db = null;
 let isCloudOnline = false;
@@ -58,7 +60,7 @@ let unsubscribeAllReviews = null;
 
 let trips = [];
 let allReviews = [];
-let privateBudgets = {};
+let privateBudgets = {}; 
 let localFlightCache = {};
 
 let currentTripId = null;
@@ -1400,7 +1402,7 @@ function renderReviewPhotoThumbnails(trip) {
 }
 
 // ============================================================================
-// 8. 모달 열기 헬퍼 함수들 (이벤트 위임에서 직접 호출)
+// 10. 모달 열기 헬퍼 함수들
 // ============================================================================
 function openNewTripModal() {
   const today = new Date().toISOString().split('T')[0];
@@ -1562,7 +1564,7 @@ function openAddReviewModal() {
 }
 
 // ============================================================================
-// 9. 앱 초기화 및 document.body 통합 이벤트 위임 바인딩
+// 11. 앱 초기화 및 document.body 통합 이벤트 위임 바인딩
 // ============================================================================
 function initializeAppAndEvents() {
   try {
@@ -1582,21 +1584,18 @@ function initializeAppAndEvents() {
   // --------------------------------------------------------------------------
   document.body.addEventListener('click', async (e) => {
     try {
-      // 1) 모달 닫기 ([data-close-modal])
       const closeBtn = e.target.closest('[data-close-modal]');
       if (closeBtn) {
         closeModalSafe(closeBtn.getAttribute('data-close-modal'));
         return;
       }
 
-      // 2) 하단 6개 메인 탭 전환 ([data-main-tab])
       const mainTabBtn = e.target.closest('[data-main-tab]');
       if (mainTabBtn) {
         switchMainTab(mainTabBtn.getAttribute('data-main-tab'));
         return;
       }
 
-      // 3) 예약 카테고리 필터 칩
       const bkChip = e.target.closest('[data-booking-filter]');
       if (bkChip) {
         currentBookingFilter = bkChip.getAttribute('data-booking-filter') || '전체';
@@ -1611,14 +1610,13 @@ function initializeAppAndEvents() {
         return;
       }
 
-      // 4) 사진 카테고리 필터 칩
       const phChip = e.target.closest('[data-photo-cat]');
       if (phChip) {
         currentPhotoFilter = phChip.getAttribute('data-photo-cat') || '전체';
         document.querySelectorAll('.photo-cat-chip').forEach((c) => {
           const on = c.getAttribute('data-photo-cat') === currentPhotoFilter;
           c.className = on
-            ? 'photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-extrabold bg-slate-800 text-white'
+            ? 'photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-slate-800 text-white'
             : 'photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600';
         });
         const trip = getActiveTrip();
@@ -1626,7 +1624,6 @@ function initializeAppAndEvents() {
         return;
       }
 
-      // 5) 리뷰 카테고리 필터 칩
       const rvChip = e.target.closest('[data-review-filter]');
       if (rvChip) {
         currentReviewFilter = rvChip.getAttribute('data-review-filter') || '전체';
@@ -1641,14 +1638,12 @@ function initializeAppAndEvents() {
         return;
       }
 
-      // 6) 리뷰 별점 선택
       const starBtn = e.target.closest('[data-star-val]');
       if (starBtn) {
         setReviewStarRating(starBtn.getAttribute('data-star-val'));
         return;
       }
 
-      // 7) 체크리스트 vs 쇼핑리스트 서브탭 전환
       const clModeBtn = e.target.closest('[data-checklist-mode]');
       if (clModeBtn) {
         currentChecklistSubTab = clModeBtn.getAttribute('data-checklist-mode') || 'packing';
@@ -1670,7 +1665,6 @@ function initializeAppAndEvents() {
         return;
       }
 
-      // 8) 모든 [data-action] 버튼 및 카드 위임 처리
       const actionEl = e.target.closest('[data-action]');
       if (!actionEl) return;
 
@@ -2832,7 +2826,9 @@ function initializeAppAndEvents() {
   });
 }
 
-// ES Module 로드 타이밍에 관계없이 100% 초기화 실행 보장
+// ----------------------------------------------------------------------------
+// 앱 진입점 실행 보장
+// ----------------------------------------------------------------------------
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initializeAppAndEvents);
 } else {

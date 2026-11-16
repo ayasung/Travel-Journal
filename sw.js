@@ -1,4 +1,4 @@
-const CACHE_NAME = 'travel-journal-v8';
+const CACHE_NAME = 'travel-journal-v9';
 
 const CORE_ASSETS = [
   './',

@@ -2,10 +2,27 @@
  * Travel Journal PWA - app.js (ES Module)
  * Firebase Firestore v10 실시간 동기화 + LocalStorage 영구 보존 안정성 (마이그레이션 방어)
  * document.body 이벤트 위임(addEventListener)으로 모든 버튼·탭 동작 100% 보장
- * [요구사항 1~10] 전체 기능 및 문법 오류 완벽 수정본
+ * [완벽 반영]
+ * 1. 일정 탭 기존 드롭다운(selectItineraryDay) 완전 제거 및 가로 스크롤 칩 네비게이션 일원화
+ * 2. 항공편 도착 공항(예: 요나고 기타로 공항) 자동 추출 및 현지 루트 길찾기 오류 완벽 해결
+ * 3. 초대 코드 입력 시 생성자 제외 동행자 체크박스 선택 모달 + 이미 선택된 이름 비활성화(중복 방지)
+ * 4. 무분별한 인원 증가 방지 + 여행 생성 시 인원 지정 + 생성자 전용 [여행 기본 정보 수정] 기능
  */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
-import { getFirestore, collection, doc, getDoc, setDoc, updateDoc, deleteDoc, getDocs, query, where, onSnapshot, arrayUnion } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
+import {
+  getFirestore,
+  collection,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  getDocs,
+  query,
+  where,
+  onSnapshot,
+  arrayUnion
+} from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {
   lookupFlightWithAirLabs,
   fetchLiveExchangeRate,
@@ -65,11 +82,14 @@ let editingReviewId = null;
 let editingReviewTripId = null;
 let currentReviewPriceMemo = '';
 
+// 초대 코드 합류 대기 중인 여행 객체
+let pendingJoinTrip = null;
+
 let leafletMap = null;
 let leafletLayerGroup = null;
 
 // ============================================================================
-// 2. 방어형 DOM 헬퍼 및 유틸리티 (요구사항 8번 유실 방지 마이그레이션)
+// 2. 방어형 DOM 헬퍼 및 유틸리티
 // ============================================================================
 function $(id) {
   return document.getElementById(id);
@@ -166,7 +186,146 @@ function registerServiceWorkerSafe() {
 }
 
 // ============================================================================
-// 3. Firebase 초기화 & 데이터 유실 방지 로컬 마이그레이션 스토리지
+// 3. index.html 수정 없이 UI 구조를 자동 보정·주입하는 헬퍼 함수
+// ============================================================================
+function setupDynamicDomEnhancements() {
+  // 1) 일정 탭의 기존 드롭다운(selectItineraryDay) 완전 제거 및 상단 레이아웃 정리
+  const oldDaySelect = $('selectItineraryDay');
+  if (oldDaySelect) {
+    oldDaySelect.classList.add('hidden');
+    oldDaySelect.style.display = 'none';
+  }
+
+  // 2) 홈 화면 초대 코드 폼에서 '내 이름' 입력칸 숨기고 초대 코드만 입력받도록 변환
+  const joinNameInput = $('inputJoinUserNickname');
+  const joinCodeInput = $('inputJoinInviteCode');
+  if (joinNameInput) {
+    joinNameInput.required = false;
+    joinNameInput.classList.add('hidden');
+    joinNameInput.style.display = 'none';
+  }
+  if (joinCodeInput) {
+    joinCodeInput.classList.remove('col-span-3');
+    joinCodeInput.classList.add('col-span-5', 'w-full');
+    joinCodeInput.placeholder = '초대 코드 입력 (예: TR-XXXX)';
+  }
+
+  // 3) 새 여행 만들기 모달에 '총 참여 인원수(명)' 입력 필드 자동 추가
+  const membersInput = $('inputNewTripMembers');
+  if (membersInput && !$('inputNewTripHeadcount')) {
+    const wrapper = membersInput.parentElement;
+    if (wrapper) {
+      const hcDiv = document.createElement('div');
+      hcDiv.className = 'mb-3';
+      hcDiv.innerHTML = `
+        <div class="flex items-center justify-between mb-1">
+          <label class="text-xs font-semibold text-slate-600">총 참여 인원수 (생성자 포함)</label>
+          <span class="text-[10px] font-bold text-sky-600">지정된 인원만 참여 가능</span>
+        </div>
+        <input id="inputNewTripHeadcount" type="number" min="1" max="30" value="2" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-extrabold outline-none focus:border-sky-500" required />
+      `;
+      wrapper.parentNode.insertBefore(hcDiv, wrapper);
+      const labelEl = wrapper.querySelector('label');
+      if (labelEl) {
+        labelEl.textContent = '참여자 닉네임 목록 (첫 번째가 생성자 본인, 쉼표 구분)';
+      }
+    }
+  }
+
+  // 4) 초대 코드 합류 시 '동행자 체크박스 선택 모달' 및 '여행 기본 정보 수정 모달' 동적 주입
+  if (!$('modalSelectJoinMember')) {
+    const modalsHtml = `
+      <!-- 초대 코드 합류 시 동행자 체크박스 선택 모달 -->
+      <div id="modalSelectJoinMember" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-2xl p-5 border border-slate-200 shadow-xl space-y-4">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div>
+              <h3 id="joinModalTripTitle" class="text-sm font-extrabold text-slate-800">여행 합류하기</h3>
+              <p class="text-[11px] text-slate-500 mt-0.5">생성자가 지정한 동행자 중 본인의 이름을 체크하세요.</p>
+            </div>
+            <button type="button" data-close-modal="modalSelectJoinMember" class="touch-target text-slate-400 hover:text-slate-600">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <form id="formConfirmJoinMember" class="space-y-3">
+            <div id="joinMemberCheckboxList" class="space-y-2 max-h-60 overflow-y-auto no-scrollbar py-1"></div>
+            <div>
+              <label class="text-xs font-semibold text-slate-600 block mb-1">내 개인 예산 설정 (KRW, 나만 보기)</label>
+              <input id="inputJoinMemberBudget" type="number" min="0" step="1000" value="1000000" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
+            </div>
+            <div class="pt-2 flex justify-end gap-2">
+              <button type="button" data-close-modal="modalSelectJoinMember" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
+              <button id="btnConfirmJoinMemberSubmit" type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">선택 완료 및 합류</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- 여행 생성자 전용: 여행 기본 정보 및 참여자 수정 모달 -->
+      <div id="modalEditTripInfo" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div class="bg-white w-full max-w-sm rounded-2xl p-5 border border-slate-200 shadow-xl space-y-3 max-h-[90vh] overflow-y-auto">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <div>
+              <h3 class="text-sm font-extrabold text-slate-800">⚙️ 여행 기본 정보 및 인원 수정</h3>
+              <p class="text-[11px] text-slate-500">생성자(방장) 전용 설정입니다.</p>
+            </div>
+            <button type="button" data-close-modal="modalEditTripInfo" class="touch-target text-slate-400 hover:text-slate-600">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <form id="formEditTripInfo" class="space-y-3">
+            <div>
+              <label class="text-xs font-semibold text-slate-600 block mb-1">여행 제목</label>
+              <input id="inputEditTripTitle" type="text" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-600 block mb-1">여행지 (도시 / 국가)</label>
+              <input id="inputEditTripDestination" type="text" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs font-semibold text-slate-600 block mb-1">시작일</label>
+                <input id="inputEditTripStartDate" type="date" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-slate-600 block mb-1">종료일</label>
+                <input id="inputEditTripEndDate" type="date" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs font-semibold text-slate-600 block mb-1">기본 통화</label>
+                <select id="selectEditTripCurrency" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
+                  <option value="KRW">KRW (원)</option>
+                  <option value="JPY">JPY (엔)</option>
+                  <option value="USD">USD (달러)</option>
+                  <option value="EUR">EUR (유로)</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-slate-600 block mb-1">총 참여 인원수(명)</label>
+                <input id="inputEditTripHeadcount" type="number" min="1" max="30" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-extrabold outline-none focus:border-sky-500" required />
+              </div>
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-slate-600 block mb-1">참여자 닉네임 목록 (첫 번째가 생성자, 쉼표 구분)</label>
+              <input id="inputEditTripMembers" type="text" placeholder="예: 나, 동행1, 동행2" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
+              <p class="text-[10px] text-slate-400 mt-1">※ 닉네임 변경 시 기존 합류 상태가 유지되며, 제외된 이름은 선택 해제됩니다.</p>
+            </div>
+            <div class="pt-2 flex justify-end gap-2">
+              <button type="button" data-close-modal="modalEditTripInfo" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
+              <button type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">수정 내용 저장</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+    document.body.insertAdjacentHTML('beforeend', modalsHtml);
+  }
+}
+
+// ============================================================================
+// 4. Firebase 초기화 & 데이터 유실 방지 로컬 마이그레이션 스토리지
 // ============================================================================
 function updateSyncBadge(online) {
   const badge = $('connectionStatusBadge');
@@ -210,17 +369,31 @@ function initFirebaseSafely() {
 
 function normalizeTrip(raw) {
   if (!raw || typeof raw !== 'object') return null;
+  const members = Array.isArray(raw.members) && raw.members.length > 0 ? raw.members : ['나'];
+  const ownerUid = raw.ownerUid || raw.memberIds?.[0] || deviceUid;
+
+  // 각 닉네임별로 점유한 기기 UID 매핑 (생성자 본인은 첫 번째 이름 자동 점유)
+  const claimedMembers =
+    raw.claimedMembers && typeof raw.claimedMembers === 'object'
+      ? { ...raw.claimedMembers }
+      : {};
+  if (members[0] && !claimedMembers[members[0]]) {
+    claimedMembers[members[0]] = ownerUid;
+  }
+
   return {
     id: raw.id || 'trip_' + Date.now(),
     inviteCode: raw.inviteCode || generateInviteCode(),
-    ownerUid: raw.ownerUid || raw.memberIds?.[0] || deviceUid,
-    memberIds: Array.isArray(raw.memberIds) ? raw.memberIds : [deviceUid],
+    ownerUid,
+    memberIds: Array.isArray(raw.memberIds) ? raw.memberIds : [ownerUid],
     title: raw.title || '나의 여행',
     destination: raw.destination || '여행지',
     startDate: raw.startDate || '2026-11-12',
     endDate: raw.endDate || '2026-11-15',
     baseCurrency: raw.baseCurrency || 'KRW',
-    members: Array.isArray(raw.members) && raw.members.length > 0 ? raw.members : ['나'],
+    maxMembers: Number(raw.maxMembers) || members.length,
+    members,
+    claimedMembers,
     itineraries: Array.isArray(raw.itineraries) ? raw.itineraries : [],
     bookings: Array.isArray(raw.bookings) ? raw.bookings : [],
     expenses: Array.isArray(raw.expenses) ? raw.expenses : [],
@@ -236,9 +409,6 @@ function normalizeTrip(raw) {
   };
 }
 
-/**
- * [요구사항 8] 현재 V8 키와 구버전 키들(V1~V7)에 저장된 데이터를 모두 탐색하여 유실 없이 병합
- */
 function loadLocalData() {
   const tripKeys = [
     STORAGE_TRIPS_KEY,
@@ -441,7 +611,7 @@ function getMyPrivateInfo(trip) {
 }
 
 // ============================================================================
-// 5. 날짜/일수 및 환율 미리보기 유틸리티 (요구사항 4번 타임존 오차 해결)
+// 5. 날짜/일수 및 환율 미리보기 유틸리티
 // ============================================================================
 function parseLocalDate(dateStr) {
   if (!dateStr) return new Date();
@@ -569,8 +739,14 @@ function renderHomeView() {
     container.innerHTML = trips
       .map((trip) => {
         const members = Array.isArray(trip.members) ? trip.members : ['나'];
+        const claimed = trip.claimedMembers || {};
         const memberTags = members
-          .map((m) => `<span class="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-semibold">${escapeHtml(m)}</span>`)
+          .map((m, idx) => {
+            const isClaimed = idx === 0 || Boolean(claimed[m]);
+            return `<span class="text-[10px] ${
+              isClaimed ? 'bg-sky-50 text-sky-700 border border-sky-200' : 'bg-slate-100 text-slate-500'
+            } px-1.5 py-0.5 rounded font-semibold">${escapeHtml(m)}${isClaimed ? '✓' : ''}</span>`;
+          })
           .join('');
 
         return `
@@ -590,7 +766,7 @@ function renderHomeView() {
             </div>
             <div class="flex items-center justify-between pt-2 border-t border-slate-100">
               <div class="flex items-center gap-1 flex-wrap">
-                <span class="text-[11px] text-slate-400 mr-1"><i class="fa-solid fa-users text-[10px] mr-1"></i>${members.length}명</span>
+                <span class="text-[11px] text-slate-500 font-bold mr-1"><i class="fa-solid fa-users text-[10px] text-sky-600 mr-1"></i>정원 ${members.length}명</span>
                 ${memberTags}
               </div>
               <span class="text-xs font-extrabold text-sky-600 shrink-0">입장 <i class="fa-solid fa-chevron-right text-[10px]"></i></span>
@@ -740,18 +916,6 @@ function populateAllDaySelectors(trip) {
     }
     el.value = prevVal && Number(prevVal) <= totalDays ? prevVal : '1';
   });
-
-  const itinerarySel = $('selectItineraryDay');
-  if (itinerarySel) {
-    itinerarySel.innerHTML = '';
-    for (let i = 1; i <= totalDays; i++) {
-      const opt = document.createElement('option');
-      opt.value = String(i);
-      opt.textContent = `Day ${i} (${getDateForTripDay(trip, i)})`;
-      itinerarySel.appendChild(opt);
-    }
-    itinerarySel.value = String(currentItineraryDay || 1);
-  }
 }
 
 function renderDetailView() {
@@ -772,9 +936,30 @@ function renderDetailView() {
   if ($('detailBaseCurrencyBadge')) $('detailBaseCurrencyBadge').textContent = trip.baseCurrency || 'KRW';
   if ($('detailTripTitle')) $('detailTripTitle').textContent = trip.title;
   if ($('detailTripPeriodAndMembers')) {
-    $('detailTripPeriodAndMembers').textContent = `${trip.startDate} ~ ${trip.endDate} · ${members.length}명`;
+    $('detailTripPeriodAndMembers').textContent = `${trip.startDate} ~ ${trip.endDate} · 정원 ${members.length}명 (${members.join(', ')})`;
   }
   if ($('detailMyNicknameLabel')) $('detailMyNicknameLabel').textContent = priv.myNickname;
+
+  // [항목 4] 여행 생성자(방장)에게만 [⚙️ 여행 정보 수정] 버튼 노출
+  const isCreator =
+    !trip.ownerUid ||
+    trip.ownerUid === deviceUid ||
+    priv.myNickname === members[0];
+  const titleEl = $('detailTripTitle');
+  if (titleEl && titleEl.parentElement) {
+    let editBtn = $('btnOpenEditTripInfoModal');
+    if (!editBtn) {
+      editBtn = document.createElement('button');
+      editBtn.id = 'btnOpenEditTripInfoModal';
+      editBtn.type = 'button';
+      editBtn.setAttribute('data-action', 'open-edit-trip-modal');
+      editBtn.className =
+        'mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-sky-50 text-slate-700 hover:text-sky-700 border border-slate-200 text-[11px] font-extrabold transition';
+      editBtn.innerHTML = '<i class="fa-solid fa-gear text-sky-600 pointer-events-none"></i><span class="pointer-events-none">여행 기본 정보 · 인원 수정</span>';
+      titleEl.parentElement.appendChild(editBtn);
+    }
+    editBtn.classList.toggle('hidden', !isCreator);
+  }
 
   populateAllDaySelectors(trip);
   renderDayChipsBar(trip);
@@ -800,18 +985,28 @@ function renderDetailView() {
 }
 
 /**
- * [요구사항 4] 가로 스크롤 칩(Chip) 네비게이션 바 렌더링
+ * [항목 1 해결] 기존 드롭다운(selectItineraryDay)을 완전히 제거하고 가로 스크롤 칩 바만 깔끔하게 표시
  */
 function renderDayChipsBar(trip) {
   const panel = $('tabPanelItinerary');
   if (!panel) return;
 
+  const oldSelect = $('selectItineraryDay');
+  if (oldSelect) {
+    oldSelect.classList.add('hidden');
+    oldSelect.style.display = 'none';
+  }
+
   let chipBar = $('itineraryDayChipsBar');
   if (!chipBar) {
     chipBar = document.createElement('div');
     chipBar.id = 'itineraryDayChipsBar';
-    chipBar.className = 'flex overflow-x-auto no-scrollbar gap-1.5 pb-1';
-    panel.insertBefore(chipBar, panel.firstChild);
+    chipBar.className = 'flex-1 flex overflow-x-auto no-scrollbar gap-1.5 py-0.5';
+    if (oldSelect && oldSelect.parentElement) {
+      oldSelect.parentElement.insertBefore(chipBar, oldSelect);
+    } else {
+      panel.insertBefore(chipBar, panel.firstChild);
+    }
   }
 
   const totalDays = calculateTripDays(trip);
@@ -830,48 +1025,107 @@ function renderDayChipsBar(trip) {
     `);
   }
   chipBar.innerHTML = chipsHtml.join('');
-
-  if ($('selectItineraryDay')) {
-    $('selectItineraryDay').value = String(currentItineraryDay || 1);
-  }
 }
 
 /**
- * [요구사항 5, 6] 일자별 동선 지도(Leaflet) 및 순수 장소명 Google Maps 길찾기 링크 생성
+ * [항목 2 해결] 일정 텍스트에서 도착 공항명 또는 순수 장소명을 정확히 추출하는 함수
+ * 예: "[항공] RS471 (인천 (ICN) ➔ 요나고(돗토리) (YGJ))" ➔ "요나고 기타로 공항"
+ */
+function extractCleanPlaceForRoute(rawPlaceStr) {
+  const raw = String(rawPlaceStr || '').trim();
+  if (!raw) return '';
+
+  // 1) 화살표(➔, ->, →)가 포함된 항공/이동 일정인 경우 도착지(화살표 뒤쪽)를 기준으로 추출
+  if (raw.includes('➔') || raw.includes('->') || raw.includes('→')) {
+    const parts = raw.split(/➔|->|→/);
+    const arrivalPart = (parts[parts.length - 1] || '').trim();
+
+    // 도착지 텍스트 안에 3자리 공항 IATA 코드(예: YGJ, NRT 등)가 있으면 공식 공항명 반환
+    const iataMatches = arrivalPart.toUpperCase().match(/\b[A-Z]{3}\b/g) || [];
+    for (const code of iataMatches) {
+      if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[code]) {
+        return AIRPORT_KO_MAP[code].name; // 예: "요나고 기타로 공항"
+      }
+    }
+
+    // IATA 코드가 없을 경우 괄호 기호들을 깔끔히 제거한 도착지명 반환
+    const cleanedArrival = arrivalPart
+      .replace(/\([A-Z]{3}\)/gi, '')
+      .replace(/[()[\]]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (cleanedArrival) return cleanedArrival;
+  }
+
+  // 2) [항공] 태그가 붙어있는데 화살표가 없는 경우에도 공항 코드 탐색
+  if (raw.startsWith('[항공]')) {
+    const iataMatches = raw.toUpperCase().match(/\b[A-Z]{3}\b/g) || [];
+    if (iataMatches.length > 0) {
+      const lastCode = iataMatches[iataMatches.length - 1];
+      if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[lastCode]) {
+        return AIRPORT_KO_MAP[lastCode].name;
+      }
+    }
+  }
+
+  // 3) 숙소 체크인/아웃 및 일반 일정 태그([숙소 체크인], [티켓/투어] 등) 제거
+  let clean = raw
+    .replace(/^\[.*?\]\s*/, '')
+    .replace(/\b[A-Z]{2}\d{3,4}\b/gi, '') // 편명(RS471 등) 제거
+    .replace(/\([A-Z]{3}\)/gi, '') // (ICN) 등 제거
+    .replace(/[()]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return clean || raw;
+}
+
+/**
+ * 일자별 동선 지도(Leaflet) 및 순수 장소명 Google Maps 길찾기 링크 생성
  */
 function renderRouteMapAndLinks(trip, dayItems) {
   try {
     const mapContainer = $('leafletRouteMapContainer');
     const linksContainer = $('localRouteLinksList');
 
-    const localStops = (dayItems || []).map((item) => {
-      const rawPlace = item.place || '';
-      const cleanPlace = rawPlace
-        .replace(/^\[.*?\]\s*/, '')
-        .replace(/\(.*?\)/g, '')
-        .trim();
-      return {
-        ...item,
-        cleanPlace: cleanPlace || rawPlace
-      };
-    });
+    const localStops = (dayItems || [])
+      .map((item) => {
+        const cleanPlace = extractCleanPlaceForRoute(item.place);
+        return {
+          ...item,
+          cleanPlace
+        };
+      })
+      .filter((s) => Boolean(s.cleanPlace));
 
     const matchedAirports = [];
-    (trip.bookings || []).forEach((bk) => {
-      if (bk.category === '항공') {
-        const bText = `${bk.title || ''} ${bk.memo || ''} ${JSON.stringify(bk.segments || [])}`.toUpperCase();
-        const bCodes = bText.match(/\b[A-Z]{3}\b/g) || [];
-        bCodes.forEach((code) => {
-          if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[code] && !matchedAirports.find((a) => a.code === code)) {
-            matchedAirports.push({ code, ...AIRPORT_KO_MAP[code] });
-          }
-        });
-      }
+    // 해당 일차의 항공 일정 또는 예약에서 공항 좌표 수집
+    (dayItems || []).forEach((it) => {
+      const codes = String(it.place || '').toUpperCase().match(/\b[A-Z]{3}\b/g) || [];
+      codes.forEach((code) => {
+        if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[code] && !matchedAirports.find((a) => a.code === code)) {
+          matchedAirports.push({ code, ...AIRPORT_KO_MAP[code] });
+        }
+      });
     });
+
+    if (matchedAirports.length === 0) {
+      (trip.bookings || []).forEach((bk) => {
+        if (bk.category === '항공') {
+          const bText = `${bk.title || ''} ${bk.memo || ''} ${JSON.stringify(bk.segments || [])}`.toUpperCase();
+          const bCodes = bText.match(/\b[A-Z]{3}\b/g) || [];
+          bCodes.forEach((code) => {
+            if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[code] && !matchedAirports.find((a) => a.code === code)) {
+              matchedAirports.push({ code, ...AIRPORT_KO_MAP[code] });
+            }
+          });
+        }
+      });
+    }
 
     if (mapContainer && window.L) {
       if (!leafletMap) {
-        leafletMap = window.L.map(mapContainer).setView([35.6895, 139.6917], 5);
+        leafletMap = window.L.map(mapContainer).setView([35.4922, 133.2364], 6);
         window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
           attribution: '&copy; OpenStreetMap'
         }).addTo(leafletMap);
@@ -900,7 +1154,7 @@ function renderRouteMapAndLinks(trip, dayItems) {
 
     if (linksContainer) {
       if (localStops.length === 0) {
-        linksContainer.innerHTML = `<p class="text-[11px] text-slate-400 text-center py-1">일정을 추가하면 장소별 Google Maps 길찾기 바로가기가 생성됩니다.</p>`;
+        linksContainer.innerHTML = `<p class="text-[11px] text-slate-400 text-center py-1">일정을 추가하면 도착 공항 및 장소별 Google Maps 길찾기 바로가기가 생성됩니다.</p>`;
       } else {
         const origin = encodeURIComponent(localStops[0].cleanPlace);
         const dest = encodeURIComponent(localStops[localStops.length - 1].cleanPlace);
@@ -928,7 +1182,7 @@ function renderRouteMapAndLinks(trip, dayItems) {
           ${
             localStops.length >= 2
               ? `<a href="${multiUrl}" target="_blank" rel="noopener noreferrer" class="block w-full text-center py-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-extrabold transition">
-                  🗺️ Day ${currentItineraryDay} 전체 동선 Google Maps 길찾기
+                  🗺️ Day ${currentItineraryDay} 전체 경로 길찾기 (${escapeHtml(localStops[0].cleanPlace)} ➔ ${escapeHtml(localStops[localStops.length - 1].cleanPlace)})
                 </a>`
               : ''
           }
@@ -1105,7 +1359,6 @@ function renderExpensesTab(trip) {
     $('groupTotalExpenseKrw').textContent = `총 ${Math.round(groupTotalKrw).toLocaleString()}원`;
   }
 
-  // 1/N 정산 계산 (인자 순서: expenses, members, myNickname)
   const summaryEl = $('settlementTransfersContainer');
   if (summaryEl) {
     let transfers = [];
@@ -1361,8 +1614,30 @@ function renderChecklistTab(trip) {
 }
 
 // ============================================================================
-// 10. 모달 열기 헬퍼 함수들 (요구사항 1, 2 완벽 반영)
+// 8. 모달 열기 헬퍼 함수들 (인원 지정 & 여행 수정 & 체크박스 합류 모달 포함)
 // ============================================================================
+function syncMemberNamesWithHeadcount(headcountInputId, membersInputId) {
+  const hcEl = $(headcountInputId);
+  const memEl = $(membersInputId);
+  if (!hcEl || !memEl) return;
+
+  const targetCount = Math.max(1, Math.min(30, Number(hcEl.value) || 1));
+  let currentList = memEl.value
+    .split(',')
+    .map((m) => m.trim())
+    .filter(Boolean);
+
+  if (currentList.length === 0) currentList = ['나'];
+
+  while (currentList.length < targetCount) {
+    currentList.push(`동행${currentList.length}`);
+  }
+  if (currentList.length > targetCount) {
+    currentList = currentList.slice(0, targetCount);
+  }
+  memEl.value = currentList.join(', ');
+}
+
 function openNewTripModal() {
   const today = new Date().toISOString().split('T')[0];
   if ($('inputNewTripTitle')) $('inputNewTripTitle').value = '';
@@ -1371,8 +1646,121 @@ function openNewTripModal() {
   if ($('inputNewTripEndDate')) $('inputNewTripEndDate').value = today;
   if ($('selectNewTripCurrency')) $('selectNewTripCurrency').value = 'KRW';
   if ($('inputNewTripMyBudget')) $('inputNewTripMyBudget').value = '1500000';
+  if ($('inputNewTripHeadcount')) $('inputNewTripHeadcount').value = '2';
   if ($('inputNewTripMembers')) $('inputNewTripMembers').value = '나, 동행1';
   openModalSafe('modalNewTrip');
+}
+
+function openEditTripInfoModal() {
+  const trip = getActiveTrip();
+  if (!trip) return;
+  const members = Array.isArray(trip.members) ? trip.members : ['나'];
+
+  if ($('inputEditTripTitle')) $('inputEditTripTitle').value = trip.title || '';
+  if ($('inputEditTripDestination')) $('inputEditTripDestination').value = trip.destination || '';
+  if ($('inputEditTripStartDate')) $('inputEditTripStartDate').value = trip.startDate || '';
+  if ($('inputEditTripEndDate')) $('inputEditTripEndDate').value = trip.endDate || '';
+  if ($('selectEditTripCurrency')) $('selectEditTripCurrency').value = trip.baseCurrency || 'KRW';
+  if ($('inputEditTripHeadcount')) $('inputEditTripHeadcount').value = String(members.length);
+  if ($('inputEditTripMembers')) $('inputEditTripMembers').value = members.join(', ');
+
+  openModalSafe('modalEditTripInfo');
+}
+
+/**
+ * [항목 3 해결] 초대 코드 입력 시 생성자(첫 번째 이름)를 제외한 동행자 목록을 체크박스로 표시하고,
+ * 이미 다른 사람이 선택한 이름은 비활성화(disabled) 처리
+ */
+function openJoinMemberSelectionModal(trip) {
+  pendingJoinTrip = trip;
+  const members = Array.isArray(trip.members) ? trip.members : ['나'];
+  const creatorName = members[0];
+  const companionNames = members.slice(1); // 생성자 제외한 동행자 목록
+  const claimed = trip.claimedMembers || {};
+
+  if ($('joinModalTripTitle')) {
+    $('joinModalTripTitle').textContent = `[${trip.title}] 참여자 선택`;
+  }
+
+  const listEl = $('joinMemberCheckboxList');
+  const submitBtn = $('btnConfirmJoinMemberSubmit');
+  if (!listEl) return;
+
+  if (companionNames.length === 0) {
+    listEl.innerHTML = `
+      <div class="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold">
+        이 여행은 1인 여행(${escapeHtml(creatorName)})으로 설정되어 있어 추가 합류할 수 있는 동행자 명단이 없습니다.<br/>
+        <span class="text-[11px] font-normal text-rose-600">여행 생성자에게 [여행 기본 정보 · 인원 수정]에서 인원 추가를 요청하세요.</span>
+      </div>
+    `;
+    if (submitBtn) submitBtn.disabled = true;
+    openModalSafe('modalSelectJoinMember');
+    return;
+  }
+
+  let availableCount = 0;
+  let precheckedDone = false;
+
+  const itemsHtml = companionNames
+    .map((name) => {
+      const holderUid = claimed[name];
+      const isTakenByOther = Boolean(holderUid && holderUid !== deviceUid);
+      const isMine = holderUid === deviceUid;
+
+      if (!isTakenByOther) availableCount++;
+
+      let checkedAttr = '';
+      if (!isTakenByOther && (isMine || !precheckedDone)) {
+        checkedAttr = 'checked';
+        precheckedDone = true;
+      }
+
+      return `
+        <label class="flex items-center justify-between p-3 rounded-xl border transition ${
+          isTakenByOther
+            ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
+            : 'bg-slate-50 hover:bg-sky-50/60 border-slate-200 cursor-pointer'
+        }">
+          <div class="flex items-center gap-2.5">
+            <input
+              type="checkbox"
+              name="joinMemberCheckbox"
+              value="${escapeHtml(name)}"
+              ${checkedAttr}
+              ${isTakenByOther ? 'disabled' : ''}
+              class="join-member-chk w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+            />
+            <span class="text-xs font-extrabold ${isTakenByOther ? 'line-through text-slate-400' : 'text-slate-800'}">
+              ${escapeHtml(name)}
+            </span>
+          </div>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded ${
+            isTakenByOther
+              ? 'bg-slate-200 text-slate-500'
+              : isMine
+              ? 'bg-emerald-100 text-emerald-700'
+              : 'bg-sky-100 text-sky-700'
+          }">
+            ${isTakenByOther ? '참여 완료 (선택 불가)' : isMine ? '내 기존 선택' : '선택 가능'}
+          </span>
+        </label>
+      `;
+    })
+    .join('');
+
+  listEl.innerHTML = `
+    <div class="px-2 py-1.5 rounded-lg bg-slate-100 text-[11px] text-slate-600 flex items-center justify-between">
+      <span>👑 여행 생성자(방장): <strong>${escapeHtml(creatorName)}</strong></span>
+      <span>동행 정원: ${companionNames.length}명</span>
+    </div>
+    ${itemsHtml}
+  `;
+
+  if (submitBtn) {
+    submitBtn.disabled = availableCount === 0;
+  }
+
+  openModalSafe('modalSelectJoinMember');
 }
 
 function renderBookingDynamicFields(category, existingData = null) {
@@ -1381,7 +1769,6 @@ function renderBookingDynamicFields(category, existingData = null) {
   const hotelStayBox = $('bookingHotelStayBox');
   const standardDateBox = $('bookingStandardDateBox');
 
-  // HTML 구조에 맞춰 각 영역 표시/숨김 전환
   if (flightMultiBox || hotelStayBox || standardDateBox) {
     if (flightMultiBox) flightMultiBox.classList.toggle('hidden', category !== '항공');
     if (hotelStayBox) hotelStayBox.classList.toggle('hidden', category !== '숙소');
@@ -1411,7 +1798,7 @@ function renderBookingDynamicFields(category, existingData = null) {
               ${segments.length > 1 ? '<button type="button" data-action="remove-flight-segment" class="text-rose-500 text-xs px-1 hover:underline">삭제</button>' : ''}
             </div>
             <div class="flex gap-1.5">
-              <input type="text" placeholder="편명 (예: KE704)" value="${escapeHtml(seg.flightNo || '')}" class="seg-flight-code touch-target flex-1 uppercase font-mono bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs font-bold outline-none" />
+              <input type="text" placeholder="편명 (예: RS471)" value="${escapeHtml(seg.flightNo || '')}" class="seg-flight-code touch-target flex-1 uppercase font-mono bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs font-bold outline-none" />
               <button type="button" data-action="lookup-segment-flight" class="touch-target px-2.5 rounded-lg bg-sky-600 text-white text-xs font-extrabold shrink-0">조회</button>
             </div>
             <div class="grid grid-cols-2 gap-1.5">
@@ -1646,10 +2033,11 @@ async function lookupFlightWithSharedCache(code) {
 }
 
 // ============================================================================
-// 11. 앱 초기화 및 document.body 통합 이벤트 위임 바인딩
+// 9. 앱 초기화 및 document.body 통합 이벤트 위임 바인딩
 // ============================================================================
 function initializeAppAndEvents() {
   try {
+    setupDynamicDomEnhancements();
     registerServiceWorkerSafe();
     loadLocalData();
     const cloudReady = initFirebaseSafely();
@@ -1657,6 +2045,7 @@ function initializeAppAndEvents() {
     if (cloudReady) {
       startRealtimeListeners();
     }
+    bindDynamicModalForms();
   } catch (err) {
     console.error('초기화 예외:', err);
   }
@@ -1766,7 +2155,7 @@ document.body.addEventListener('click', async (e) => {
       return;
     }
 
-    // [요구사항 1] 항공편 다구간 추가 버튼
+    // 항공편 다구간 추가 버튼
     const addSegBtn = e.target.closest('[data-action="add-flight-segment"]');
     if (addSegBtn) {
       const segContainer = $('flightSegmentsContainer') || $('flightSegmentsListContainer');
@@ -1783,7 +2172,7 @@ document.body.addEventListener('click', async (e) => {
             <button type="button" data-action="remove-flight-segment" class="text-rose-500 text-xs px-1 hover:underline">삭제</button>
           </div>
           <div class="flex gap-1.5">
-            <input type="text" placeholder="편명 (예: KE704)" class="seg-flight-code touch-target flex-1 uppercase font-mono bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs font-bold outline-none" />
+            <input type="text" placeholder="편명 (예: RS471)" class="seg-flight-code touch-target flex-1 uppercase font-mono bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs font-bold outline-none" />
             <button type="button" data-action="lookup-segment-flight" class="touch-target px-2.5 rounded-lg bg-sky-600 text-white text-xs font-extrabold shrink-0">조회</button>
           </div>
           <div class="grid grid-cols-2 gap-1.5">
@@ -1846,6 +2235,10 @@ document.body.addEventListener('click', async (e) => {
     switch (action) {
       case 'open-new-trip-modal':
         openNewTripModal();
+        break;
+
+      case 'open-edit-trip-modal':
+        openEditTripInfoModal();
         break;
 
       case 'back-to-home':
@@ -2382,13 +2775,23 @@ document.body.addEventListener('change', async (e) => {
     const target = e.target;
     if (!target) return;
 
-    if (target.id === 'selectItineraryDay') {
-      currentItineraryDay = Number(target.value) || 1;
-      const trip = getActiveTrip();
-      if (trip) {
-        renderDayChipsBar(trip);
-        renderItineraryTab(trip);
+    // 합류 모달에서 체크박스는 1개(본인 이름)만 단일 선택되도록 동작
+    if (target.classList.contains('join-member-chk')) {
+      if (target.checked) {
+        document.querySelectorAll('.join-member-chk').forEach((chk) => {
+          if (chk !== target) chk.checked = false;
+        });
       }
+      return;
+    }
+
+    // 인원수 변경 시 동행자 입력칸 자동 맞춤
+    if (target.id === 'inputNewTripHeadcount') {
+      syncMemberNamesWithHeadcount('inputNewTripHeadcount', 'inputNewTripMembers');
+      return;
+    }
+    if (target.id === 'inputEditTripHeadcount') {
+      syncMemberNamesWithHeadcount('inputEditTripHeadcount', 'inputEditTripMembers');
       return;
     }
 
@@ -2440,7 +2843,6 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-    // [요구사항 6] 티켓/투어 등 예약명에서 카테고리 태그 제거 후 순수 장소명 추출
     if (target.id === 'selectReviewFromBooking') {
       const bkId = target.value;
       const trip = getActiveTrip();
@@ -2517,12 +2919,133 @@ document.body.addEventListener('input', (e) => {
   }
 });
 
-// [요구사항 3] 초대 코드로 참여 폼 제출 핸들러 (방장이 지정한 일행 목록 중 본인 이름 선택 지원)
+function bindDynamicModalForms() {
+  // 1) 체크박스 합류 확인 모달 제출 처리
+  $('formConfirmJoinMember')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      if (!pendingJoinTrip) return;
+      const checkedEl = document.querySelector('.join-member-chk:checked');
+      if (!checkedEl) {
+        alert('참여할 본인의 이름을 체크해주세요.');
+        return;
+      }
+
+      const selectedName = checkedEl.value.trim();
+      const myBudget = Number($('inputJoinMemberBudget')?.value) || 1000000;
+
+      if (!pendingJoinTrip.claimedMembers) pendingJoinTrip.claimedMembers = {};
+      const existingHolder = pendingJoinTrip.claimedMembers[selectedName];
+      if (existingHolder && existingHolder !== deviceUid) {
+        alert(`'${selectedName}'님은 이미 다른 참여자가 선택했습니다. 다른 이름을 선택해주세요.`);
+        openJoinMemberSelectionModal(pendingJoinTrip);
+        return;
+      }
+
+      // 이전에 내가 점유했던 다른 이름이 있으면 해제 후 새 이름으로 등록
+      Object.keys(pendingJoinTrip.claimedMembers).forEach((k) => {
+        if (k !== pendingJoinTrip.members[0] && pendingJoinTrip.claimedMembers[k] === deviceUid) {
+          delete pendingJoinTrip.claimedMembers[k];
+        }
+      });
+
+      pendingJoinTrip.claimedMembers[selectedName] = deviceUid;
+      pendingJoinTrip.memberIds = Array.from(new Set([...(pendingJoinTrip.memberIds || []), deviceUid]));
+
+      const existingIdx = trips.findIndex((t) => t.id === pendingJoinTrip.id);
+      if (existingIdx >= 0) {
+        trips[existingIdx] = pendingJoinTrip;
+      } else {
+        trips.unshift(pendingJoinTrip);
+      }
+
+      privateBudgets[pendingJoinTrip.id] = {
+        myBudget,
+        myNickname: selectedName
+      };
+
+      const joinedTripId = pendingJoinTrip.id;
+      const joinedTripTitle = pendingJoinTrip.title;
+      saveLocalData();
+      closeModalSafe('modalSelectJoinMember');
+      await syncTripToFirestore(pendingJoinTrip);
+      pendingJoinTrip = null;
+
+      enterTripDetail(joinedTripId);
+      alert(`'${joinedTripTitle}' 여행에 [${selectedName}]님으로 합류했습니다!`);
+    } catch (err) {
+      console.error('동행자 선택 합류 오류:', err);
+    }
+  });
+
+  // 2) 여행 생성자 전용: 여행 기본 정보 및 참여 인원 수정 폼 제출 처리
+  $('formEditTripInfo')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      const trip = getActiveTrip();
+      if (!trip) return;
+
+      const title = ($('inputEditTripTitle')?.value || '').trim() || trip.title;
+      const destination = ($('inputEditTripDestination')?.value || '').trim() || trip.destination;
+      const startDate = $('inputEditTripStartDate')?.value || trip.startDate;
+      const endDate = $('inputEditTripEndDate')?.value || startDate;
+      const baseCurrency = ($('selectEditTripCurrency')?.value || 'KRW').toUpperCase();
+      const headcount = Math.max(1, Number($('inputEditTripHeadcount')?.value) || 1);
+      const rawMembers = $('inputEditTripMembers')?.value || '나';
+
+      let members = rawMembers
+        .split(',')
+        .map((m) => m.trim())
+        .filter(Boolean);
+
+      if (members.length === 0) members = ['나'];
+      while (members.length < headcount) {
+        members.push(`동행${members.length}`);
+      }
+      if (members.length > headcount) {
+        members = members.slice(0, headcount);
+      }
+
+      // 기존 claimedMembers 정리 (생성자는 첫 번째 이름, 남아있는 이름은 점유 상태 유지)
+      const oldClaimed = trip.claimedMembers || {};
+      const newClaimed = {};
+      newClaimed[members[0]] = trip.ownerUid || deviceUid;
+      members.slice(1).forEach((m) => {
+        if (oldClaimed[m]) {
+          newClaimed[m] = oldClaimed[m];
+        }
+      });
+
+      trip.title = title;
+      trip.destination = destination;
+      trip.startDate = startDate;
+      trip.endDate = endDate;
+      trip.baseCurrency = baseCurrency;
+      trip.maxMembers = members.length;
+      trip.members = members;
+      trip.claimedMembers = newClaimed;
+
+      // 생성자 본인의 닉네임 동기화
+      if (privateBudgets[trip.id]) {
+        privateBudgets[trip.id].myNickname = members[0];
+      }
+
+      saveLocalData();
+      closeModalSafe('modalEditTripInfo');
+      renderDetailView();
+      await syncTripToFirestore(trip);
+      alert('여행 기본 정보 및 참여자 설정이 수정되었습니다!');
+    } catch (err) {
+      console.error('여행 기본 정보 수정 오류:', err);
+    }
+  });
+}
+
+// [항목 3, 4 해결] 초대 코드 입력 시 이름 입력 없이 즉시 동행자 체크박스 선택 모달 오픈
 $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
     const code = ($('inputJoinInviteCode')?.value || '').trim().toUpperCase();
-    let nickname = ($('inputJoinUserNickname')?.value || '').trim();
     if (!code) {
       alert('초대 코드를 입력해주세요.');
       return;
@@ -2530,7 +3053,7 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
 
     let foundTrip = trips.find((t) => (t.inviteCode || '').toUpperCase() === code);
 
-    if (!foundTrip && isCloudOnline && db) {
+    if (isCloudOnline && db) {
       const q = query(collection(db, 'trips'), where('inviteCode', '==', code));
       const snap = await getDocs(q);
       snap.forEach((docSnap) => {
@@ -2539,44 +3062,26 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
     }
 
     if (!foundTrip) {
-      alert('일치하는 초대 코드의 여행을 찾지 못했습니다.');
+      alert('일치하는 초대 코드의 여행을 찾지 못했습니다. 코드를 다시 확인해주세요.');
       return;
     }
 
-    const existingMembers = Array.isArray(foundTrip.members) ? foundTrip.members : ['나'];
-    if (!nickname || !existingMembers.includes(nickname)) {
-      const pick = prompt(
-        `[${foundTrip.title}] 여행의 동행자 목록입니다:\n(${existingMembers.join(', ')})\n\n본인의 이름을 위 목록에서 골라 입력하거나 새 이름을 입력하세요:`,
-        nickname || existingMembers[0]
-      );
-      if (pick && pick.trim()) {
-        nickname = pick.trim();
-      }
+    // 만약 본인이 생성자(방장)인 여행이라면 바로 입장
+    if (foundTrip.ownerUid === deviceUid) {
+      if (!trips.find((t) => t.id === foundTrip.id)) trips.unshift(foundTrip);
+      saveLocalData();
+      enterTripDetail(foundTrip.id);
+      return;
     }
 
-    if (nickname && !existingMembers.includes(nickname)) {
-      foundTrip.members.push(nickname);
-    }
-    foundTrip.memberIds = Array.from(new Set([...(foundTrip.memberIds || []), deviceUid]));
-
-    if (!trips.find((t) => t.id === foundTrip.id)) {
-      trips.unshift(foundTrip);
-    }
-    privateBudgets[foundTrip.id] = {
-      myBudget: privateBudgets[foundTrip.id]?.myBudget || 1000000,
-      myNickname: nickname || existingMembers[0]
-    };
-
-    saveLocalData();
-    await syncTripToFirestore(foundTrip);
-    enterTripDetail(foundTrip.id);
-    alert(`'${foundTrip.title}' 여행에 [${nickname}]님으로 합류했습니다!`);
+    openJoinMemberSelectionModal(foundTrip);
   } catch (err) {
-    console.error('초대 코드 합류 오류:', err);
-    alert('초대 코드로 합류하는 중 오류가 발생했습니다.');
+    console.error('초대 코드 조회 오류:', err);
+    alert('초대 코드를 확인하는 중 오류가 발생했습니다.');
   }
 });
 
+// [항목 4 해결] 새 여행 생성 시 인원수 및 참여자 명단 확정 저장
 $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -2586,13 +3091,22 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const endDate = $('inputNewTripEndDate')?.value || startDate;
     const baseCurrency = ($('selectNewTripCurrency')?.value || 'KRW').toUpperCase();
     const myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
+    const headcount = Math.max(1, Number($('inputNewTripHeadcount')?.value) || 1);
     const rawMembers = $('inputNewTripMembers')?.value || '나';
 
-    const members = rawMembers
+    let members = rawMembers
       .split(',')
       .map((m) => m.trim())
       .filter(Boolean);
     if (members.length === 0) members.push('나');
+
+    // 지정한 인원수에 맞춰 동행자 목록 정원 고정
+    while (members.length < headcount) {
+      members.push(`동행${members.length}`);
+    }
+    if (members.length > headcount) {
+      members = members.slice(0, headcount);
+    }
 
     const newTrip = normalizeTrip({
       id: 'trip_' + Date.now(),
@@ -2601,7 +3115,9 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       startDate,
       endDate,
       baseCurrency,
+      maxMembers: members.length,
       members,
+      claimedMembers: { [members[0]]: deviceUid },
       ownerUid: deviceUid,
       memberIds: [deviceUid]
     });
@@ -2659,7 +3175,6 @@ $('formCreateSchedule')?.addEventListener('submit', async (e) => {
   }
 });
 
-// [요구사항 1, 2] 예약 폼 제출 핸들러 (괄호 오타 완벽 수정)
 $('formCreateBooking')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {

@@ -1489,6 +1489,7 @@ function openAddScheduleModal() {
   openModalSafe('modalAddSchedule');
 }
 
+// [수정 완료] 예약 카테고리별 동적 입력 필드 생성 렌더링 함수 (요구사항 1, 2 반영)
 function renderBookingDynamicFields(category, existingData = null) {
   const container = $('bookingDynamicExtraFieldsContainer');
   if (!container) return;
@@ -2715,165 +2716,198 @@ function initializeAppAndEvents() {
     }
   });
 
-  // 예약 폼 제출 핸들러 (항공 다구간 일괄 등록 및 숙소 체크인/아웃 연동 처리)
-  $('formCreateBooking')?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    try {
-      const trip = getActiveTrip();
-      if (!trip) return;
+// 예약 폼 제출 핸들러 (항공 다구간 일괄 등록 및 숙소 체크인/아웃 연동 처리)
+$('formCreateBooking')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try {
+    const trip = getActiveTrip();
+    if (!trip) return;
 
-      const priv = getMyPrivateInfo(trip);
-      const bookingId = editingBookingId || 'bk_' + Date.now();
-      const category = $('selectBookingCategory')?.value || '항공';
-      const date = $('inputBookingDate')?.value || trip.startDate || '';
-      const title = ($('inputBookingTitle')?.value || '').trim();
-      const time = $('inputBookingTime')?.value || '10:00';
-      const code = ($('inputBookingCode')?.value || '').trim().toUpperCase();
-      const memo = ($('inputBookingMemo')?.value || '').trim();
+    const category = $('selectBookingCategory')?.value || '항공';
+    const code = ($('inputBookingCode')?.value || '').trim().toUpperCase();
+    const memo = ($('inputBookingMemo')?.value || '').trim();
+    const currency = ($('selectBookingCurrency')?.value || trip.baseCurrency || 'KRW').toUpperCase();
+    const amount = Number($('inputBookingAmount')?.value) || 0;
+    const autoSync = $('chkBookingAutoSync')?.checked !== false;
+    const payer = $('selectBookingPayer']?.value || getMyPrivateInfo(trip).myNickname;
+    
+    const participantChks = document.querySelectorAll('.bk-part-chk');
+    const participants = participantChks.length > 0 
+      ? Array.from(participantChks).filter(c => c.checked).map(c => c.value) 
+      : [payer];
 
-      const currency = ($('selectBookingCurrency')?.value || 'KRW').toUpperCase();
-      const amount = Number($('inputBookingAmount')?.value) || 0;
-      const payer = ($('selectBookingPayer')?.value || priv.myNickname).trim();
-      const checkedParts = document.querySelectorAll('.bk-part-chk:checked');
-      const participants = Array.from(checkedParts).map((cb) => cb.value.trim()).filter(Boolean);
-      const autoSync = Boolean($('chkBookingAutoSync')?.checked);
+    const bookingId = editingBookingId || ('bk_' + Date.now());
+    let title = ($('inputBookingTitle')?.value || '').trim();
 
-      if (!title) return;
+    // 기존 연동된 일정 및 지출 데이터 우선 정리 (수정 시 중복 방지)
+    trip.itineraries = (trip.itineraries || []).filter((s) => s.bookingId !== bookingId);
+    trip.expenses = (trip.expenses || []).filter((ex) => ex.bookingId !== bookingId);
 
-      let segmentDataList = [];
-      let hotelDataObj = null;
+    let newBookingObj = {
+      id: bookingId,
+      category,
+      code,
+      title,
+      memo,
+      currency,
+      amount,
+      autoSync,
+      payer,
+      participants
+    };
 
-      if (category === '항공') {
-        const rows = document.querySelectorAll('.flight-segment-row');
-        rows.forEach((row) => {
-          const fNo = (row.querySelector('.seg-flight-code')?.value || '').trim().toUpperCase();
-          const fDate = row.querySelector('.seg-flight-date')?.value || date;
-          const fTime = row.querySelector('.seg-flight-time')?.value || time;
-          const fDep = (row.querySelector('.seg-flight-dep')?.value || '').trim();
-          const fArr = (row.querySelector('.seg-flight-arr')?.value || '').trim();
-          if (fNo || fDep || fArr) {
-            segmentDataList.push({ flightNo: fNo, date: fDate, time: fTime, dep: fDep, arr: fArr });
-          }
+    if (category === '항공') {
+      const segmentRows = document.querySelectorAll('.flight-segment-row');
+      const segments = [];
+      segmentRows.forEach((row) => {
+        segments.push({
+          flightNo: (row.querySelector('.seg-flight-code')?.value || '').trim().toUpperCase(),
+          date: row.querySelector('.seg-flight-date')?.value || trip.startDate,
+          time: row.querySelector('.seg-flight-time')?.value || '10:00',
+          dep: (row.querySelector('.seg-flight-dep')?.value || '').trim(),
+          arr: (row.querySelector('.seg-flight-arr')?.value || '').trim()
         });
-        if (segmentDataList.length === 0) {
-          segmentDataList.push({ flightNo: code, date, time, dep: '', arr: '' });
-        }
-      } else if (category === '숙소') {
-        hotelDataObj = {
-          checkInDate: $('inputHotelCheckInDate')?.value || trip.startDate || '',
-          checkOutDate: $('inputHotelCheckOutDate')?.value || trip.endDate || '',
-          checkInTime: $('inputHotelCheckInTime')?.value || '15:00',
-          checkOutTime: $('inputHotelCheckOutTime')?.value || '11:00'
-        };
+      });
+
+      if (segments.length === 0) {
+        alert('최소 1개 이상의 항공편 구간을 입력해주세요.');
+        return;
       }
 
-      const bookingObj = {
-        id: bookingId,
-        category,
-        date,
-        title,
-        time,
-        code,
-        memo,
-        currency,
-        amount,
-        payer,
-        participants: participants.length > 0 ? participants : [payer],
-        autoSync,
-        segments: segmentDataList.length > 0 ? segmentDataList : null,
-        hotel: hotelDataObj
+      if (!title) {
+        title = `${segments[0].dep || '출발'} ➔ ${segments[segments.length - 1].arr || '도착'} 항공편`;
+      }
+
+      newBookingObj.title = title;
+      newBookingObj.segments = segments;
+      newBookingObj.date = segments[0].date;
+      newBookingObj.time = segments[0].time;
+
+      // 일정 자동 연동 (각 구간별로 해당 날짜의 일정표에 등록)
+      if (autoSync) {
+        segments.forEach((seg, idx) => {
+          const dayNum = inferDayNumberFromDate(trip, seg.date);
+          trip.itineraries.push({
+            id: `it_bk_flight_${bookingId}_${idx}`,
+            bookingId: bookingId,
+            day: dayNum,
+            time: seg.time || '10:00',
+            place: `[항공] ${seg.flightNo || title} (${seg.dep} ➔ ${seg.arr})`,
+            memo: `편명: ${seg.flightNo} · ${memo}`.trim()
+          });
+        });
+      }
+    } else if (category === '숙소') {
+      const checkInDate = $('inputHotelCheckInDate')?.value || trip.startDate;
+      const checkOutDate = $('inputHotelCheckOutDate')?.value || trip.endDate;
+      const checkInTime = $('inputHotelCheckInTime')?.value || '15:00';
+      const checkOutTime = $('inputHotelCheckOutTime')?.value || '11:00';
+
+      if (!title) {
+        title = '숙소 예약';
+      }
+
+      newBookingObj.title = title;
+      newBookingObj.date = checkInDate;
+      newBookingObj.time = checkInTime;
+      newBookingObj.hotel = {
+        checkInDate,
+        checkInTime,
+        checkOutDate,
+        checkOutTime
       };
 
-      if (!Array.isArray(trip.bookings)) trip.bookings = [];
-      if (editingBookingId) {
-        const idx = trip.bookings.findIndex((b) => b.id === editingBookingId);
-        if (idx !== -1) trip.bookings[idx] = bookingObj;
-      } else {
-        trip.bookings.push(bookingObj);
+      // 숙소 체크인 및 체크아웃 일정 자동 연동
+      if (autoSync) {
+        const checkInDay = inferDayNumberFromDate(trip, checkInDate);
+        trip.itineraries.push({
+          id: `it_bk_hotel_in_${bookingId}`,
+          bookingId: bookingId,
+          day: checkInDay,
+          time: checkInTime,
+          place: `[숙소 체크인] ${title}`,
+          memo: `체크아웃: ${checkOutDate} ${checkOutTime} · ${memo}`.trim()
+        });
+
+        const checkOutDay = inferDayNumberFromDate(trip, checkOutDate);
+        if (checkOutDay !== checkInDay) {
+          trip.itineraries.push({
+            id: `it_bk_hotel_out_${bookingId}`,
+            bookingId: bookingId,
+            day: checkOutDay,
+            time: checkOutTime,
+            place: `[숙소 체크아웃] ${title}`,
+            memo: `${memo}`.trim()
+          });
+        }
+      }
+    } else {
+      // 일반 예약 (렌터카, 티켓/투어 등)
+      const date = $('inputBookingDate')?.value || trip.startDate;
+      const time = $('inputBookingTime')?.value || '10:00';
+
+      if (!title) {
+        title = `${category} 예약`;
       }
 
-      trip.itineraries = (trip.itineraries || []).filter((s) => s.bookingId !== bookingId);
-      trip.expenses = (trip.expenses || []).filter((ex) => ex.bookingId !== bookingId);
+      newBookingObj.title = title;
+      newBookingObj.date = date;
+      newBookingObj.time = time;
 
       if (autoSync) {
-        if (category === '항공' && segmentDataList.length > 0) {
-          segmentDataList.forEach((seg, sIdx) => {
-            const segDay = inferDayNumberFromDate(trip, seg.date);
-            const routeDesc = seg.dep && seg.arr ? ` (${seg.dep} ➔ ${seg.arr})` : '';
-            const segTitle = `[항공] ${title}${routeDesc}`;
-            const segMemo = [seg.flightNo ? `편명: ${seg.flightNo}` : '', code ? `예약번호: ${code}` : '', memo].filter(Boolean).join(' / ');
-
-            trip.itineraries.push({
-              id: `it_bk_${bookingId}_${sIdx}`,
-              bookingId,
-              day: segDay,
-              time: seg.time || time,
-              place: segTitle,
-              memo: segMemo
-            });
-          });
-        } else if (category === '숙소' && hotelDataObj) {
-          const inDay = inferDayNumberFromDate(trip, hotelDataObj.checkInDate);
-          const outDay = inferDayNumberFromDate(trip, hotelDataObj.checkOutDate);
-
-          trip.itineraries.push({
-            id: `it_bk_${bookingId}_in`,
-            bookingId,
-            day: inDay,
-            time: hotelDataObj.checkInTime,
-            place: `[숙소] ${title} 체크인`,
-            memo: code ? `예약번호: ${code} / ${memo}` : memo
-          });
-
-          if (outDay !== inDay || hotelDataObj.checkOutDate !== hotelDataObj.checkInDate) {
-            trip.itineraries.push({
-              id: `it_bk_${bookingId}_out`,
-              bookingId,
-              day: outDay,
-              time: hotelDataObj.checkOutTime,
-              place: `[숙소] ${title} 체크아웃`,
-              memo: `체크아웃 준비 및 이동`
-            });
-          }
-        } else {
-          const dayNum = inferDayNumberFromDate(trip, date);
-          const schedMemo = [code ? `예약번호: ${code}` : '', memo].filter(Boolean).join(' / ');
-
-          trip.itineraries.push({
-            id: `it_bk_${bookingId}_gen`,
-            bookingId,
-            day: dayNum,
-            time,
-            place: `[${category}] ${title}`,
-            memo: schedMemo
-          });
-        }
-
-        if (amount > 0) {
-          const fx = await fetchLiveExchangeRate(currency);
-          trip.expenses.push({
-            id: 'ex_bk_' + Date.now(),
-            bookingId,
-            title: `[${category}] ${title}`,
-            currency,
-            amount,
-            rateToKrw: fx.rate,
-            payer,
-            participants: participants.length > 0 ? participants : [payer],
-            createdAt: new Date().toISOString()
-          });
-        }
+        const dayNum = inferDayNumberFromDate(trip, date);
+        trip.itineraries.push({
+          id: `it_bk_std_${bookingId}`,
+          bookingId: bookingId,
+          day: dayNum,
+          time: time,
+          place: `[${category}] ${title}`,
+          memo: memo
+        });
       }
-
-      editingBookingId = null;
-      saveLocalData();
-      closeModalSafe('modalAddBooking');
-      renderDetailView();
-      await syncTripToFirestore(trip);
-    } catch (err) {
-      console.error('예약 저장 오류:', err);
     }
-  });
+
+    // 예약 금액이 존재할 경우 공용 지출(Expenses)에도 자동 연동
+    if (autoSync && amount > 0) {
+      const rateToKrw = getCachedRateToKrw(currency);
+      trip.expenses.push({
+        id: `exp_bk_${bookingId}`,
+        bookingId: bookingId,
+        title: `[예약연동] ${title}`,
+        currency: currency,
+        amount: amount,
+        rateToKrw: rateToKrw,
+        payer: payer,
+        participants: participants,
+        date: newBookingObj.date || trip.startDate
+      });
+    }
+
+    // 기존 배열에 반영 또는 수정 처리
+    if (editingBookingId) {
+      const idx = (trip.bookings || []).findIndex(b => b.id === editingBookingId);
+      if (idx >= 0) {
+        trip.bookings[idx] = newBookingObj;
+      } else {
+        trip.bookings.push(newBookingObj);
+      }
+      editingBookingId = null;
+    } else {
+      if (!trip.bookings) trip.bookings = [];
+      trip.bookings.push(newBookingObj);
+    }
+
+    saveLocalData();
+    closeModalSafe('modalAddBooking');
+    renderDetailView();
+    await syncTripToFirestore(trip);
+
+    alert('예약 내역이 성공적으로 저장되고 일정·지출에 자동 연동되었습니다!');
+  } catch (err) {
+    console.error('예약 저장 오류:', err);
+    alert('예약 저장 중 오류가 발생했습니다.');
+  }
+});
 
   $('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
     e.preventDefault();

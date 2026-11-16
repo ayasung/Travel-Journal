@@ -2,9 +2,11 @@
  * Travel Journal PWA - app.js (ES Module)
  * Firebase Firestore v10 실시간 동기화 + LocalStorage 영구 보존 안정성 (마이그레이션 방어)
  * document.body 이벤트 위임(addEventListener)으로 모든 버튼·탭 동작 100% 보장
- * [최종 반영]
- * 1. 여행 인원 참여 상태 UI 어색함 해결 ([참여 완료 ✓] / [대기 중] 배지 적용)
- * 2. 여행 기본정보 닉네임 변경 시 기존 참여자 자동 반영 연동
+ * [최종 통합 반영]
+ * 1. 참여 상태 컬러 배지 UI (초록/회색 직관적 표시)
+ * 2. 환전 예산 (현재 환율 / 실제 지불 원화 기준 환율 순서 반영)
+ * 3. 지출 및 예약 통화 선택 확장
+ * 4. 통화 업데이트 시 실시간 환율 자동 연동
  */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
@@ -32,7 +34,7 @@ import {
 } from './services.js';
 
 // ============================================================================
-// [Firebase 설정 블록] 요구사항 7번 고정 설정값
+// [Firebase 설정 블록] 고정 설정값
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBp6NVo7O-ya5MfcmI1_NvnKKLnH3tGF3k",
@@ -80,7 +82,6 @@ let editingReviewId = null;
 let editingReviewTripId = null;
 let currentReviewPriceMemo = '';
 
-// 초대 코드 합류 대기 중인 여행 객체
 let pendingJoinTrip = null;
 
 let leafletMap = null;
@@ -184,7 +185,7 @@ function registerServiceWorkerSafe() {
 }
 
 // ============================================================================
-// 3. index.html 수정 없이 UI 구조를 자동 보정·주입하는 헬퍼 함수
+// 3. UI 동적 보정 및 환전 예산/통화 확장 필드 주입
 // ============================================================================
 function setupDynamicDomEnhancements() {
   const oldDaySelect = $('selectItineraryDay');
@@ -206,24 +207,24 @@ function setupDynamicDomEnhancements() {
     joinCodeInput.placeholder = '초대 코드 입력 (예: TR-XXXX)';
   }
 
-  const membersInput = $('inputNewTripMembers');
-  if (membersInput && !$('inputNewTripHeadcount')) {
-    const wrapper = membersInput.parentElement;
+  // 새 여행 만들기 모달에 환전 예산 필드 동적 추가
+  const budgetInput = $('inputNewTripMyBudget');
+  if (budgetInput && !$('inputNewTripExchangeAmount')) {
+    const wrapper = budgetInput.parentElement;
     if (wrapper) {
-      const hcDiv = document.createElement('div');
-      hcDiv.className = 'mb-3';
-      hcDiv.innerHTML = `
-        <div class="flex items-center justify-between mb-1">
-          <label class="text-xs font-semibold text-slate-600">총 참여 인원수 (생성자 포함)</label>
-          <span class="text-[10px] font-bold text-sky-600">지정된 인원만 참여 가능</span>
+      const exchangeDiv = document.createElement('div');
+      exchangeDiv.className = 'grid grid-cols-2 gap-2 mt-2';
+      exchangeDiv.innerHTML = `
+        <div>
+          <label class="text-xs font-semibold text-slate-600 block mb-1">환전 외화 금액 (선택)</label>
+          <input id="inputNewTripExchangeAmount" type="number" min="0" step="any" placeholder="예: 50000 (엔/달러)" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
         </div>
-        <input id="inputNewTripHeadcount" type="number" min="1" max="30" value="2" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-extrabold outline-none focus:border-sky-500" required />
+        <div>
+          <label class="text-xs font-semibold text-slate-600 block mb-1">실제 지불 원화 (환전비용)</label>
+          <input id="inputNewTripExchangeKrw" type="number" min="0" step="1000" placeholder="예: 460000" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
+        </div>
       `;
-      wrapper.parentNode.insertBefore(hcDiv, wrapper);
-      const labelEl = wrapper.querySelector('label');
-      if (labelEl) {
-        labelEl.textContent = '참여자 닉네임 목록 (첫 번째가 생성자 본인, 쉼표 구분)';
-      }
+      wrapper.parentNode.appendChild(exchangeDiv);
     }
   }
 
@@ -243,8 +244,8 @@ function setupDynamicDomEnhancements() {
           <form id="formConfirmJoinMember" class="space-y-3">
             <div id="joinMemberCheckboxList" class="space-y-2 max-h-60 overflow-y-auto no-scrollbar py-1"></div>
             <div>
-              <label class="text-xs font-semibold text-slate-600 block mb-1">내 개인 예산 설정 (KRW, 나만 보기)</label>
-              <input id="inputJoinMemberBudget" type="number" min="0" step="1000" value="1000000" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
+              <label class="text-xs font-semibold text-slate-600 block mb-1">내 개인 총 예산 설정 (KRW)</label>
+              <input id="inputJoinMemberBudget" type="number" min="0" step="1000" value="1500000" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
             </div>
             <div class="pt-2 flex justify-end gap-2">
               <button type="button" data-close-modal="modalSelectJoinMember" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
@@ -300,9 +301,8 @@ function setupDynamicDomEnhancements() {
               </div>
             </div>
             <div>
-              <label class="text-xs font-semibold text-slate-600 block mb-1">참여자 닉네임 목록 (첫 번째가 생성자, 쉼표 구분)</label>
+              <label class="text-xs font-semibold text-slate-600 block mb-1">참여자 닉네임 목록 (쉼표 구분)</label>
               <input id="inputEditTripMembers" type="text" placeholder="예: 나, 동행1, 동행2" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-              <p class="text-[10px] text-slate-400 mt-1">※ 닉네임 변경 시 기존 참여 상태가 자동 승계됩니다.</p>
             </div>
             <div class="pt-2 flex justify-end gap-2">
               <button type="button" data-close-modal="modalEditTripInfo" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
@@ -376,7 +376,7 @@ function normalizeTrip(raw) {
     id: raw.id || 'trip_' + Date.now(),
     inviteCode: raw.inviteCode || generateInviteCode(),
     ownerUid,
-    memberIds: Array.isArray(raw.memberIds) ? raw.memberIds : [ownerUid],
+    memberIds: Array.isArray(raw.memberIds) ? raw.memberIds : [deviceUid],
     title: raw.title || '나의 여행',
     destination: raw.destination || '여행지',
     startDate: raw.startDate || '2026-11-12',
@@ -602,7 +602,7 @@ function getMyPrivateInfo(trip) {
 }
 
 // ============================================================================
-// 5. 날짜/일수 및 환율 미리보기 유틸리티
+// 5. 날짜/일수 및 통화/환율 실시간 갱신 유틸리티
 // ============================================================================
 function parseLocalDate(dateStr) {
   if (!dateStr) return new Date();
@@ -731,18 +731,19 @@ function renderHomeView() {
       .map((trip) => {
         const members = Array.isArray(trip.members) ? trip.members : ['나'];
         const claimed = trip.claimedMembers || {};
-        
-        // [항목 1 반영] 인원 닉네임 옆에 슬래시 대신 [참여 완료 ✓] / [대기 중] 배지로 깔끔하게 분리
+
+        // [요구사항 1 반영] 직관적인 컬러 배지 (참여 완료 = 초록색, 대기 중 = 회색)
         const memberTags = members
           .map((m, idx) => {
             const isClaimed = idx === 0 || Boolean(claimed[m]);
             return `
               <span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-bold ${
                 isClaimed
-                  ? 'bg-sky-50 text-sky-700 border border-sky-200'
-                  : 'bg-slate-100 text-slate-400 border border-slate-200'
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                  : 'bg-slate-100 text-slate-500 border border-slate-200'
               }">
-                ${escapeHtml(m)} <span class="text-[9px] font-semibold">${isClaimed ? '✓ 참여' : '대기'}</span>
+                <span class="w-1.5 h-1.5 rounded-full ${isClaimed ? 'bg-emerald-500' : 'bg-slate-400'}"></span>
+                ${escapeHtml(m)} (${isClaimed ? '참여 완료' : '대기 중'})
               </span>
             `;
           })
@@ -937,11 +938,11 @@ function renderDetailView() {
 
   const claimed = trip.claimedMembers || {};
   const membersStatusStr = members
-    .map((m, idx) => `${m} ${idx === 0 || claimed[m] ? '✓' : '(대기)'}`)
+    .map((m) => `${m} (${idx === 0 || claimed[m] ? '참여 완료' : '대기 중'})`)
     .join(', ');
 
   if ($('detailTripPeriodAndMembers')) {
-    $('detailTripPeriodAndMembers').textContent = `${trip.startDate} ~ ${trip.endDate} · 정원 ${members.length}명 (${membersStatusStr})`;
+    $('detailTripPeriodAndMembers').textContent = `${trip.startDate} ~ ${trip.endDate} · 정원 ${members.length}명`;
   }
   if ($('detailMyNicknameLabel')) $('detailMyNicknameLabel').textContent = priv.myNickname;
 
@@ -1602,7 +1603,7 @@ function renderChecklistTab(trip) {
 }
 
 // ============================================================================
-// 8. 모달 열기 헬퍼 함수들
+// 8. 모달 열기 헬퍼 함수들 (환전 및 통화 자동 갱신 반영)
 // ============================================================================
 function syncMemberNamesWithHeadcount(headcountInputId, membersInputId) {
   const hcEl = $(headcountInputId);
@@ -1626,16 +1627,25 @@ function syncMemberNamesWithHeadcount(headcountInputId, membersInputId) {
   memEl.value = currentList.join(', ');
 }
 
-function openNewTripModal() {
+async function openNewTripModal() {
   const today = new Date().toISOString().split('T')[0];
   if ($('inputNewTripTitle')) $('inputNewTripTitle').value = '';
   if ($('inputNewTripDestination')) $('inputNewTripDestination').value = '';
   if ($('inputNewTripStartDate')) $('inputNewTripStartDate').value = today;
   if ($('inputNewTripEndDate')) $('inputNewTripEndDate').value = today;
-  if ($('selectNewTripCurrency')) $('selectNewTripCurrency').value = 'KRW';
+  if ($('selectNewTripCurrency')) $('selectNewTripCurrency').value = 'JPY'; // 기본 엔화 추천
   if ($('inputNewTripMyBudget')) $('inputNewTripMyBudget').value = '1500000';
+  if ($('inputNewTripExchangeAmount')) $('inputNewTripExchangeAmount').value = '';
+  if ($('inputNewTripExchangeKrw')) $('inputNewTripExchangeKrw').value = '';
   if ($('inputNewTripHeadcount')) $('inputNewTripHeadcount').value = '2';
   if ($('inputNewTripMembers')) $('inputNewTripMembers').value = '나, 동행1';
+  
+  // [요구사항 4] 여행 생성 시점에 최신 환율 사전 갱신
+  try {
+    await fetchLiveExchangeRate('JPY');
+    await fetchLiveExchangeRate('USD');
+  } catch (e) {}
+
   openModalSafe('modalNewTrip');
 }
 
@@ -1673,8 +1683,7 @@ function openJoinMemberSelectionModal(trip) {
   if (companionNames.length === 0) {
     listEl.innerHTML = `
       <div class="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold">
-        이 여행은 1인 여행(${escapeHtml(creatorName)})으로 설정되어 있어 추가 합류할 수 있는 동행자 명단이 없습니다.<br/>
-        <span class="text-[11px] font-normal text-rose-600">여행 생성자에게 [여행 기본 정보 · 인원 수정]에서 인원 추가를 요청하세요.</span>
+        이 여행은 1인 여행(${escapeHtml(creatorName)})으로 설정되어 있어 추가 합류할 수 있는 동행자 명단이 없습니다.
       </div>
     `;
     if (submitBtn) submitBtn.disabled = true;
@@ -1734,7 +1743,7 @@ function openJoinMemberSelectionModal(trip) {
 
   listEl.innerHTML = `
     <div class="px-2 py-1.5 rounded-lg bg-slate-100 text-[11px] text-slate-600 flex items-center justify-between">
-      <span>👑 여행 생성자(방장): <strong>${escapeHtml(creatorName)}</strong></span>
+      <span>👑 방장: <strong>${escapeHtml(creatorName)}</strong></span>
       <span>동행 정원: ${companionNames.length}명</span>
     </div>
     ${itemsHtml}
@@ -1824,7 +1833,7 @@ function renderBookingDynamicFields(category, existingData = null) {
   }
 }
 
-function openAddBookingModal() {
+async function openAddBookingModal() {
   const trip = getActiveTrip();
   if (!trip) return;
   editingBookingId = null;
@@ -1839,7 +1848,12 @@ function openAddBookingModal() {
   if ($('inputBookingTitle')) $('inputBookingTitle').value = '';
   if ($('inputBookingCode')) $('inputBookingCode').value = '';
   if ($('inputBookingMemo')) $('inputBookingMemo').value = '';
-  if ($('selectBookingCurrency')) $('selectBookingCurrency').value = trip.baseCurrency || 'KRW';
+  
+  // [요구사항 3, 4] 통화 선택 기본값 세팅 및 실시간 환율 연동
+  const currSelect = $('selectBookingCurrency');
+  if (currSelect) {
+    currSelect.value = trip.baseCurrency || 'JPY';
+  }
   if ($('inputBookingAmount')) $('inputBookingAmount').value = '';
   if ($('chkBookingAutoSync')) $('chkBookingAutoSync').checked = true;
 
@@ -1878,7 +1892,7 @@ function openAddScheduleModal() {
   openModalSafe('modalAddSchedule');
 }
 
-function openAddExpenseModal() {
+async function openAddExpenseModal() {
   const trip = getActiveTrip();
   if (!trip) return;
   editingExpenseId = null;
@@ -1888,12 +1902,13 @@ function openAddExpenseModal() {
   const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : [priv.myNickname];
 
   if ($('inputExpTitle')) $('inputExpTitle').value = '';
-  if ($('selectExpCurrency')) $('selectExpCurrency').value = trip.baseCurrency || 'KRW';
+  
+  // [요구사항 3, 4] 지출 통화 선택 및 열자마자 최신 환율 반영
+  const currSelect = $('selectExpCurrency');
+  if (currSelect) {
+    currSelect.value = trip.baseCurrency || 'JPY';
+  }
   if ($('inputExpAmount')) $('inputExpAmount').value = '';
-  if ($('inputExpAppliedRate')) $('inputExpAppliedRate').value = '1';
-  if ($('expRateStatusText')) $('expRateStatusText').textContent = '적용 환율 (1 KRW = 1 KRW)';
-  if ($('expRateUnitPrefix')) $('expRateUnitPrefix').textContent = '1 KRW =';
-  if ($('expConvertedKrwPreview')) $('expConvertedKrwPreview').textContent = '0 KRW';
 
   if ($('selectExpPayer')) {
     $('selectExpPayer').innerHTML = members
@@ -1906,7 +1921,7 @@ function openAddExpenseModal() {
       .map(
         (m) => `
         <label class="flex items-center gap-2.5 py-1 text-xs font-semibold text-slate-700 cursor-pointer">
-          <input type="checkbox" value="${escapeHtml(m)}" checked class="exp-participant-chk w-4 h-4 rounded border-slate-300 text-sky-600" />
+          <input type="checkbox" value="${escapeHtml(m)}" checked class="exp-participant-chk w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
           <span>${escapeHtml(m)}</span>
         </label>
       `
@@ -1915,7 +1930,7 @@ function openAddExpenseModal() {
   }
 
   openModalSafe('modalAddExpense');
-  syncExpenseModalRateFromApi();
+  await syncExpenseModalRateFromApi();
 }
 
 function openAddPhotoModal() {
@@ -1939,7 +1954,7 @@ function setReviewStarRating(ratingVal) {
   starBtns.forEach((btn) => {
     const val = Number(btn.getAttribute('data-star-val'));
     if (val <= num) {
-      btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-400 bg-amber-400 text-white text-xs font-extrabold shadow-2xs';
+      btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-400 bg-amber-400 text-white text-xs font-extrabold shadow-2xl';
     } else {
       btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-300 bg-amber-50 text-amber-500 text-xs font-extrabold';
     }
@@ -2302,115 +2317,6 @@ document.body.addEventListener('click', async (e) => {
         break;
       }
 
-      case 'toggle-ai-planner':
-        $('aiPlannerBox')?.classList.toggle('hidden');
-        break;
-
-      case 'close-ai-planner':
-        $('aiPlannerBox')?.classList.add('hidden');
-        break;
-
-      case 'generate-ai-schedule': {
-        const trip = getActiveTrip();
-        if (!trip) break;
-        const concept = ($('inputAiConcept')?.value || '').trim() || '현지 대표 명소 및 미식 탐방';
-        const budgetMan = Number($('inputAiTargetBudget')?.value) || 100;
-        const totalDays = calculateTripDays(trip);
-
-        const suggestions = [];
-        for (let d = 1; d <= totalDays; d++) {
-          const existingTimes = new Set(
-            (trip.itineraries || []).filter((s) => Number(s.day) === d).map((s) => s.time)
-          );
-          if (!existingTimes.has('10:30')) {
-            suggestions.push({
-              day: d,
-              time: '10:30',
-              place: `${trip.destination} 핵심 명소 산책 (Day ${d})`,
-              memo: `컨셉: ${concept} · 오전 추천 동선`
-            });
-          }
-          if (!existingTimes.has('12:30')) {
-            suggestions.push({
-              day: d,
-              time: '12:30',
-              place: `${trip.destination} 로컬 미식 런치`,
-              memo: `희망 예산 약 ${Math.round(budgetMan / totalDays)}만원/일 배분`
-            });
-          }
-          if (!existingTimes.has('15:30')) {
-            suggestions.push({
-              day: d,
-              time: '15:30',
-              place: `${trip.destination} 감성 카페 & 전망 스폿`,
-              memo: `${concept} 테마 추천 코스`
-            });
-          }
-        }
-
-        aiGeneratedSuggestions = suggestions;
-        const listEl = $('aiSuggestionItemsList');
-        if (listEl) {
-          listEl.innerHTML = suggestions
-            .map(
-              (s) =>
-                `<div class="bg-white px-2.5 py-1.5 rounded-lg border border-indigo-100">
-                  <strong>[Day ${s.day} ${s.time}]</strong> ${escapeHtml(s.place)}
-                  <span class="block text-[10px] text-slate-400">${escapeHtml(s.memo)}</span>
-                </div>`
-            )
-            .join('');
-        }
-        $('aiSuggestionResultArea')?.classList.remove('hidden');
-        break;
-      }
-
-      case 'apply-ai-schedules': {
-        const trip = getActiveTrip();
-        if (!trip || aiGeneratedSuggestions.length === 0) break;
-
-        aiGeneratedSuggestions.forEach((s, idx) => {
-          trip.itineraries.push({
-            id: 'it_ai_' + Date.now() + '_' + idx,
-            day: s.day,
-            time: s.time,
-            place: s.place,
-            memo: s.memo
-          });
-        });
-
-        const count = aiGeneratedSuggestions.length;
-        aiGeneratedSuggestions = [];
-        $('aiSuggestionResultArea')?.classList.add('hidden');
-        $('aiPlannerBox')?.classList.add('hidden');
-
-        saveLocalData();
-        renderItineraryTab(trip);
-        await syncTripToFirestore(trip);
-        alert(`AI 추천 일정 ${count}건이 일정표에 한 번에 추가되었습니다!`);
-        break;
-      }
-
-      case 'share-itinerary-text': {
-        const trip = getActiveTrip();
-        if (!trip) break;
-        const selectedDay = Number(currentItineraryDay) || 1;
-        const dateStr = getDateForTripDay(trip, selectedDay);
-        const dayItems = (trip.itineraries || [])
-          .filter((s) => Number(s.day) === selectedDay)
-          .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
-
-        const lines = [
-          `✈️ [${trip.title}] Day ${selectedDay} 일정 (${dateStr})`,
-          `━━━━━━━━━━━━━━━━━━`,
-          ...(dayItems.length === 0
-            ? ['• 등록된 일정이 없습니다.']
-            : dayItems.map((s) => `⏰ ${s.time} | ${s.place}${s.memo ? `\n   └ ${s.memo}` : ''}`))
-        ];
-        await shareOrCopyText(`${trip.title} 일정`, lines.join('\n'), '일정 요약이 클립보드에 복사되었습니다!');
-        break;
-      }
-
       case 'open-add-booking-modal':
         openAddBookingModal();
         break;
@@ -2486,7 +2392,7 @@ document.body.addEventListener('click', async (e) => {
       }
 
       case 'open-add-expense-modal':
-        openAddExpenseModal();
+        await openAddExpenseModal();
         break;
 
       case 'fetch-expense-rate':
@@ -2573,26 +2479,6 @@ document.body.addEventListener('click', async (e) => {
         break;
       }
 
-      case 'edit-viewing-photo': {
-        const trip = getActiveTrip();
-        const photo = trip?.photos?.find((p) => p.id === viewingPhotoId);
-        if (!photo) break;
-        const newPlace = prompt('장소명을 수정하세요:', photo.place || '');
-        if (newPlace !== null && newPlace.trim() !== '') {
-          photo.place = newPlace.trim();
-        }
-        const newMemo = prompt('메모를 수정하세요:', photo.memo || '');
-        if (newMemo !== null) {
-          photo.memo = newMemo.trim();
-        }
-        if ($('viewPhotoPlaceTitle')) $('viewPhotoPlaceTitle').textContent = photo.place;
-        if ($('viewPhotoMemoText')) $('viewPhotoMemoText').textContent = photo.memo || '등록된 메모가 없습니다.';
-        saveLocalData();
-        renderPhotosTab(trip);
-        await syncTripToFirestore(trip);
-        break;
-      }
-
       case 'delete-viewing-photo': {
         const trip = getActiveTrip();
         if (trip && viewingPhotoId && confirm('이 사진을 삭제하시겠습니까?')) {
@@ -2639,28 +2525,6 @@ document.body.addEventListener('click', async (e) => {
           if ($('inputReviewContent')) $('inputReviewContent').value = rv.content || '';
           selectedReviewPhotoIds = Array.isArray(rv.photoIds) ? [...rv.photoIds] : [];
           renderReviewPhotoThumbnails(trip);
-          openModalSafe('modalAddReview');
-        }
-        break;
-      }
-
-      case 'edit-global-review': {
-        const targetTrip = trips.find((t) => t.id === tripId);
-        const rv = targetTrip?.reviews?.find((r) => r.id === id);
-        if (targetTrip && rv) {
-          editingReviewId = rv.id;
-          editingReviewTripId = targetTrip.id;
-          currentReviewPriceMemo = rv.priceMemo || '';
-          if ($('modalReviewHeading')) $('modalReviewHeading').textContent = '방문 장소 리뷰 수정';
-          populateAllDaySelectors(targetTrip);
-          if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = rv.place || '';
-          if ($('selectReviewCategory')) $('selectReviewCategory').value = rv.category || '맛집/카페';
-          if ($('selectReviewDay')) $('selectReviewDay').value = String(rv.day || 1);
-          setReviewStarRating(rv.rating || 5);
-          if ($('chkReviewRevisit')) $('chkReviewRevisit').checked = Boolean(rv.revisit);
-          if ($('inputReviewContent')) $('inputReviewContent').value = rv.content || '';
-          selectedReviewPhotoIds = Array.isArray(rv.photoIds) ? [...rv.photoIds] : [];
-          renderReviewPhotoThumbnails(targetTrip);
           openModalSafe('modalAddReview');
         }
         break;
@@ -2809,7 +2673,8 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-    if (target.id === 'selectExpCurrency') {
+    // [요구사항 3, 4] 통화 변경 시 실시간 환율 자동 동기화
+    if (target.id === 'selectExpCurrency' || target.id === 'selectBookingCurrency') {
       await syncExpenseModalRateFromApi();
       return;
     }
@@ -2912,12 +2777,12 @@ function bindDynamicModalForms() {
       }
 
       const selectedName = checkedEl.value.trim();
-      const myBudget = Number($('inputJoinMemberBudget')?.value) || 1000000;
+      const myBudget = Number($('inputJoinMemberBudget')?.value) || 1500000;
 
       if (!pendingJoinTrip.claimedMembers) pendingJoinTrip.claimedMembers = {};
       const existingHolder = pendingJoinTrip.claimedMembers[selectedName];
       if (existingHolder && existingHolder !== deviceUid) {
-        alert(`'${selectedName}'님은 이미 다른 참여자가 선택했습니다. 다른 이름을 선택해주세요.`);
+        alert(`'${selectedName}'님은 이미 다른 참여자가 선택했습니다.`);
         openJoinMemberSelectionModal(pendingJoinTrip);
         return;
       }
@@ -2957,7 +2822,6 @@ function bindDynamicModalForms() {
     }
   });
 
-  // [항목 2 반영] 닉네임 목록을 수정했을 때 기존 참여 상태(claimedMembers)를 새 닉네임과 매끄럽게 승계
   $('formEditTripInfo')?.addEventListener('submit', async (e) => {
     e.preventDefault();
     try {
@@ -2985,15 +2849,12 @@ function bindDynamicModalForms() {
         newMembers = newMembers.slice(0, headcount);
       }
 
-      // 기존 claimedMembers 맵핑 안전 승계
       const oldClaimed = trip.claimedMembers || {};
       const newClaimed = {};
       const oldMembers = Array.isArray(trip.members) ? trip.members : [];
 
-      // 첫 번째 생성자는 방장 UID 고정
       newClaimed[newMembers[0]] = trip.ownerUid || deviceUid;
 
-      // 기존에 매핑되어 있던 기기 UID를 순서 혹은 이름 일치 여부에 따라 새 닉네임에 연결
       newMembers.slice(1).forEach((newM, i) => {
         const oldM = oldMembers[i + 1];
         if (oldM && oldClaimed[oldM]) {
@@ -3012,7 +2873,6 @@ function bindDynamicModalForms() {
       trip.members = newMembers;
       trip.claimedMembers = newClaimed;
 
-      // 현재 접속 중인 내 닉네임이 목록에 여전히 포함되어 있는지 확인 후 동기화
       const priv = getMyPrivateInfo(trip);
       if (!newMembers.includes(priv.myNickname)) {
         if (privateBudgets[trip.id]) {
@@ -3051,7 +2911,7 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
     }
 
     if (!foundTrip) {
-      alert('일치하는 초대 코드의 여행을 찾지 못했습니다. 코드를 다시 확인해주세요.');
+      alert('일치하는 초대 코드의 여행을 찾지 못했습니다.');
       return;
     }
 
@@ -3065,10 +2925,10 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
     openJoinMemberSelectionModal(foundTrip);
   } catch (err) {
     console.error('초대 코드 조회 오류:', err);
-    alert('초대 코드를 확인하는 중 오류가 발생했습니다.');
   }
 });
 
+// [요구사항 2 반영] 새 여행 생성 시 환전 예산 적용 (1. 현재 환율 / 2. 실제 지불 원화 기준 환전 시점 환율)
 $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -3076,8 +2936,22 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const destination = ($('inputNewTripDestination')?.value || '').trim() || '여행지';
     const startDate = $('inputNewTripStartDate')?.value || new Date().toISOString().split('T')[0];
     const endDate = $('inputNewTripEndDate')?.value || startDate;
-    const baseCurrency = ($('selectNewTripCurrency')?.value || 'KRW').toUpperCase();
-    const myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
+    const baseCurrency = ($('selectNewTripCurrency')?.value || 'JPY').toUpperCase();
+    let myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
+    
+    const exchangeAmount = Number($('inputNewTripExchangeAmount')?.value) || 0;
+    const exchangeKrw = Number($('inputNewTripExchangeKrw')?.value) || 0;
+
+    // 환전 예산 계산 로직: 
+    // 1순위: 실제 환전에 지불한 원화(exchangeKrw)가 있으면 총 예산에 합산 반영
+    // 2순위: 외화 금액만 있고 원화가 없으면 현재 환율(getCachedRateToKrw) 기준으로 원화 환산 합산
+    if (exchangeKrw > 0) {
+      myBudget += exchangeKrw;
+    } else if (exchangeAmount > 0) {
+      const liveRate = getCachedRateToKrw(baseCurrency);
+      myBudget += Math.round(exchangeAmount * liveRate);
+    }
+
     const headcount = Math.max(1, Number($('inputNewTripHeadcount')?.value) || 1);
     const rawMembers = $('inputNewTripMembers')?.value || '나';
 
@@ -3170,7 +3044,7 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
     const category = $('selectBookingCategory')?.value || '항공';
     const code = ($('inputBookingCode')?.value || '').trim().toUpperCase();
     const memo = ($('inputBookingMemo')?.value || '').trim();
-    const currency = ($('selectBookingCurrency')?.value || trip.baseCurrency || 'KRW').toUpperCase();
+    const currency = ($('selectBookingCurrency')?.value || trip.baseCurrency || 'JPY').toUpperCase();
     const amount = Number($('inputBookingAmount')?.value) || 0;
     const autoSync = $('chkBookingAutoSync')?.checked !== false;
     const payer = $('selectBookingPayer')?.value || getMyPrivateInfo(trip).myNickname;
@@ -3343,10 +3217,9 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
     renderDetailView();
     await syncTripToFirestore(trip);
 
-    alert('예약 내역이 성공적으로 저장되고 일정·지출에 자동 연동되었습니다!');
+    alert('예약 내역이 성공적으로 저장되었습니다!');
   } catch (err) {
     console.error('예약 저장 오류:', err);
-    alert('예약 저장 중 오류가 발생했습니다.');
   }
 });
 
@@ -3369,7 +3242,7 @@ $('formCreateExpense')?.addEventListener('submit', async (e) => {
     if (!trip) return;
 
     const title = ($('inputExpTitle')?.value || '').trim();
-    const currency = ($('selectExpCurrency')?.value || 'KRW').toUpperCase();
+    const currency = ($('selectExpCurrency')?.value || 'JPY').toUpperCase();
     const amount = Number($('inputExpAmount')?.value) || 0;
     const rateToKrw = currency === 'KRW' ? 1 : Number($('inputExpAppliedRate')?.value) || 1;
     const payer = ($('selectExpPayer')?.value || '').trim() || getMyPrivateInfo(trip).myNickname;
@@ -3423,7 +3296,6 @@ $('formCreateExpense')?.addEventListener('submit', async (e) => {
     await syncTripToFirestore(trip);
   } catch (err) {
     console.error('지출 저장 오류:', err);
-    alert('지출 내역 저장 중 오류가 발생했습니다.');
   }
 });
 

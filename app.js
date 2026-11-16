@@ -2739,7 +2739,6 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
     const bookingId = editingBookingId || ('bk_' + Date.now());
     let title = ($('inputBookingTitle')?.value || '').trim();
 
-    // 기존 연동된 일정 및 지출 데이터 우선 정리 (수정 시 중복 방지)
     trip.itineraries = (trip.itineraries || []).filter((s) => s.bookingId !== bookingId);
     trip.expenses = (trip.expenses || []).filter((ex) => ex.bookingId !== bookingId);
 
@@ -2783,7 +2782,6 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
       newBookingObj.date = segments[0].date;
       newBookingObj.time = segments[0].time;
 
-      // 일정 자동 연동 (각 구간별로 해당 날짜의 일정표에 등록)
       if (autoSync) {
         segments.forEach((seg, idx) => {
           const dayNum = inferDayNumberFromDate(trip, seg.date);
@@ -2817,7 +2815,6 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
         checkOutTime
       };
 
-      // 숙소 체크인 및 체크아웃 일정 자동 연동
       if (autoSync) {
         const checkInDay = inferDayNumberFromDate(trip, checkInDate);
         trip.itineraries.push({
@@ -2842,7 +2839,6 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
         }
       }
     } else {
-      // 일반 예약 (렌터카, 티켓/투어 등)
       const date = $('inputBookingDate')?.value || trip.startDate;
       const time = $('inputBookingTime')?.value || '10:00';
 
@@ -2867,7 +2863,6 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
       }
     }
 
-    // 예약 금액이 존재할 경우 공용 지출(Expenses)에도 자동 연동
     if (autoSync && amount > 0) {
       const rateToKrw = getCachedRateToKrw(currency);
       trip.expenses.push({
@@ -2883,13 +2878,12 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
       });
     }
 
-    // 기존 배열에 반영 또는 수정 처리
     if (editingBookingId) {
       const idx = (trip.bookings || []).findIndex(b => b.id === editingBookingId);
       if (idx >= 0) {
         trip.bookings[idx] = newBookingObj;
       } else {
-        trip.bookings.push(newBookingObj);
+        trip.bookings[idx] = newBookingObj;
       }
       editingBookingId = null;
     } else {

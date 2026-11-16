@@ -2,11 +2,7 @@
  * Travel Journal PWA - app.js (ES Module)
  * Firebase Firestore v10 실시간 동기화 + LocalStorage 영구 보존 안정성 (마이그레이션 방어)
  * document.body 이벤트 위임(addEventListener)으로 모든 버튼·탭 동작 100% 보장
- * [최종 통합 반영]
- * 1. 참여 상태 컬러 배지 UI (초록/회색 직관적 표시)
- * 2. 환전 예산 (현재 환율 / 실제 지불 원화 기준 환율 순서 반영)
- * 3. 지출 및 예약 통화 선택 확장
- * 4. 통화 업데이트 시 실시간 환율 자동 연동
+ * [최종 통합 반영 버전]
  */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
@@ -34,7 +30,7 @@ import {
 } from './services.js';
 
 // ============================================================================
-// [Firebase 설정 블록] 고정 설정값
+// [Firebase 설정 블록]
 // ============================================================================
 const firebaseConfig = {
   apiKey: "AIzaSyBp6NVo7O-ya5MfcmI1_NvnKKLnH3tGF3k",
@@ -185,7 +181,7 @@ function registerServiceWorkerSafe() {
 }
 
 // ============================================================================
-// 3. UI 동적 보정 및 환전 예산/통화 확장 필드 주입
+// 3. UI 동적 보정 및 환전/통화/렌터카 확장 필드 주입
 // ============================================================================
 function setupDynamicDomEnhancements() {
   const oldDaySelect = $('selectItineraryDay');
@@ -207,24 +203,88 @@ function setupDynamicDomEnhancements() {
     joinCodeInput.placeholder = '초대 코드 입력 (예: TR-XXXX)';
   }
 
-  // 새 여행 만들기 모달에 환전 예산 필드 동적 추가
-  const budgetInput = $('inputNewTripMyBudget');
-  if (budgetInput && !$('inputNewTripExchangeAmount')) {
-    const wrapper = budgetInput.parentElement;
-    if (wrapper) {
-      const exchangeDiv = document.createElement('div');
-      exchangeDiv.className = 'grid grid-cols-2 gap-2 mt-2';
-      exchangeDiv.innerHTML = `
+  // [요구사항 2, 3] 새 여행 만들기 모달에 대표 통화 + 현지 통화 및 환전 정보 입력 필드 동적 추가
+  const currencySelect = $('selectNewTripCurrency');
+  if (currencySelect && !$('selectNewTripLocalCurrency')) {
+    const parentGrid = currencySelect.closest('.grid');
+    if (parentGrid) {
+      const extraCurrDiv = document.createElement('div');
+      extraCurrDiv.className = 'grid grid-cols-2 gap-2 mt-2 col-span-2';
+      extraCurrDiv.innerHTML = `
+        <div>
+          <label class="text-xs font-semibold text-slate-600 block mb-1">현지 추가 통화</label>
+          <select id="selectNewTripLocalCurrency" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
+            <option value="JPY" selected>JPY (엔)</option>
+            <option value="USD">USD (달러)</option>
+            <option value="EUR">EUR (유로)</option>
+            <option value="KRW">KRW (원)</option>
+            <option value="TWD">TWD (대만달러)</option>
+            <option value="THB">THB (바트)</option>
+            <option value="VND">VND (동)</option>
+          </select>
+        </div>
         <div>
           <label class="text-xs font-semibold text-slate-600 block mb-1">환전 외화 금액 (선택)</label>
-          <input id="inputNewTripExchangeAmount" type="number" min="0" step="any" placeholder="예: 50000 (엔/달러)" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
+          <input id="inputNewTripExchangeAmount" type="number" min="0" step="any" placeholder="예: 50000" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
         </div>
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">실제 지불 원화 (환전비용)</label>
-          <input id="inputNewTripExchangeKrw" type="number" min="0" step="1000" placeholder="예: 460000" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
+        <div class="col-span-2">
+          <label class="text-xs font-semibold text-slate-600 block mb-1">실제 지불한 원화 금액 (환전 비용)</label>
+          <input id="inputNewTripExchangeKrw" type="number" min="0" step="1000" placeholder="예: 460000 (미입력 시 현재 환율 자동 적용)" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
         </div>
       `;
-      wrapper.parentNode.appendChild(exchangeDiv);
+      parentGrid.parentNode.insertBefore(extraCurrDiv, parentGrid.nextSibling);
+    }
+  }
+
+  // [요구사항 5] 예약 모달 내에 렌터카 전용 상세 박스 주입 (편도 반납 체크포인트 포함)
+  const bookingForm = $('formCreateBooking');
+  if (bookingForm && !$('bookingRentalCarBox')) {
+    const flightBox = $('bookingFlightMultiBox');
+    if (flightBox) {
+      const rentalDiv = document.createElement('div');
+      rentalDiv.id = 'bookingRentalCarBox';
+      rentalDiv.className = 'hidden space-y-2.5 bg-amber-50/60 border border-amber-100 rounded-xl p-3';
+      rentalDiv.innerHTML = `
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-extrabold text-amber-950">
+            <i class="fa-solid fa-car mr-1 text-amber-600"></i>렌터카 대여 및 반납 설정
+          </span>
+          <span id="rentalDurationBadge" class="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-amber-600 text-white">대여 기간</span>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[11px] font-semibold text-slate-600 block mb-1">대여 시작 날짜</label>
+            <input id="inputRentalPickDate" type="date" class="touch-target w-full bg-white border border-slate-200 rounded-xl px-2.5 text-xs font-medium outline-none" />
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-slate-600 block mb-1">대여 시작 시간</label>
+            <input id="inputRentalPickTime" type="time" value="09:00" class="touch-target w-full bg-white border border-slate-200 rounded-xl px-2.5 text-xs font-bold outline-none" />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[11px] font-semibold text-slate-600 block mb-1">반납 날짜</label>
+            <input id="inputRentalDropDate" type="date" class="touch-target w-full bg-white border border-slate-200 rounded-xl px-2.5 text-xs font-medium outline-none" />
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-slate-600 block mb-1">반납 시간</label>
+            <input id="inputRentalDropTime" type="time" value="18:00" class="touch-target w-full bg-white border border-slate-200 rounded-xl px-2.5 text-xs font-bold outline-none" />
+          </div>
+        </div>
+        <div>
+          <label class="text-[11px] font-semibold text-slate-600 block mb-1">대여 장소 (인수 지점)</label>
+          <input id="inputRentalPickLoc" type="text" placeholder="예: 요나고 공항 렌터카 카운터" class="touch-target w-full bg-white border border-slate-200 rounded-xl px-2.5 text-xs font-medium outline-none" />
+        </div>
+        <label class="flex items-center gap-2 text-xs font-bold text-amber-900 cursor-pointer pt-1">
+          <input id="chkRentalSameLocation" type="checkbox" checked class="w-4 h-4 rounded border-slate-300 text-amber-600" />
+          <span>대여지와 반납지가 동일합니다.</span>
+        </label>
+        <div id="rentalDropLocWrapper" class="hidden pt-1">
+          <label class="text-[11px] font-semibold text-slate-600 block mb-1">반납 장소 (편도 반납 지점)</label>
+          <input id="inputRentalDropLoc" type="text" placeholder="예: 마쓰에 역 앞 지점" class="touch-target w-full bg-white border border-slate-200 rounded-xl px-2.5 text-xs font-medium outline-none" />
+        </div>
+      `;
+      flightBox.parentNode.insertBefore(rentalDiv, flightBox.nextSibling);
     }
   }
 
@@ -287,7 +347,7 @@ function setupDynamicDomEnhancements() {
             </div>
             <div class="grid grid-cols-2 gap-2">
               <div>
-                <label class="text-xs font-semibold text-slate-600 block mb-1">기본 통화</label>
+                <label class="text-xs font-semibold text-slate-600 block mb-1">기준 통화</label>
                 <select id="selectEditTripCurrency" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
                   <option value="KRW">KRW (원)</option>
                   <option value="JPY">JPY (엔)</option>
@@ -382,6 +442,7 @@ function normalizeTrip(raw) {
     startDate: raw.startDate || '2026-11-12',
     endDate: raw.endDate || '2026-11-15',
     baseCurrency: raw.baseCurrency || 'KRW',
+    localCurrency: raw.localCurrency || 'JPY',
     maxMembers: Number(raw.maxMembers) || members.length,
     members,
     claimedMembers,
@@ -602,7 +663,7 @@ function getMyPrivateInfo(trip) {
 }
 
 // ============================================================================
-// 5. 날짜/일수 및 통화/환율 실시간 갱신 유틸리티
+// 5. 날짜/일수 및 통화/환율 유틸리티
 // ============================================================================
 function parseLocalDate(dateStr) {
   if (!dateStr) return new Date();
@@ -664,9 +725,25 @@ function updateHotelStayDurationBadge() {
   }
 }
 
+function updateRentalDurationBadge() {
+  const badge = $('rentalDurationBadge');
+  const pickDate = $('inputRentalPickDate')?.value;
+  const dropDate = $('inputRentalDropDate')?.value;
+  if (!badge || !pickDate || !dropDate) return;
+
+  const s = parseLocalDate(pickDate);
+  const e = parseLocalDate(dropDate);
+  const diffDays = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24));
+  if (diffDays >= 0) {
+    badge.textContent = `${diffDays}일 대여`;
+  } else {
+    badge.textContent = '일정 확인';
+  }
+}
+
 function updateExpenseModalRatePreview() {
   try {
-    const curr = ($('selectExpCurrency')?.value || 'KRW').toUpperCase();
+    const curr = ($('selectExpCurrency')?.value || 'JPY').toUpperCase();
     const amount = Number($('inputExpAmount')?.value) || 0;
     const rate = Number($('inputExpAppliedRate')?.value) || 0;
 
@@ -681,7 +758,7 @@ function updateExpenseModalRatePreview() {
 
 async function syncExpenseModalRateFromApi() {
   try {
-    const curr = ($('selectExpCurrency')?.value || 'KRW').toUpperCase();
+    const curr = ($('selectExpCurrency')?.value || 'JPY').toUpperCase();
     const statusText = $('expRateStatusText');
     const rateInput = $('inputExpAppliedRate');
 
@@ -732,18 +809,18 @@ function renderHomeView() {
         const members = Array.isArray(trip.members) ? trip.members : ['나'];
         const claimed = trip.claimedMembers || {};
 
-        // [요구사항 1 반영] 직관적인 컬러 배지 (참여 완료 = 초록색, 대기 중 = 회색)
+        // [요구사항 1] 텍스트 없이 컬러 점(초록=참여 완료, 회색=대기 중)으로 직관적 구분
         const memberTags = members
           .map((m, idx) => {
             const isClaimed = idx === 0 || Boolean(claimed[m]);
             return `
-              <span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-md font-bold ${
+              <span class="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold ${
                 isClaimed
                   ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : 'bg-slate-100 text-slate-500 border border-slate-200'
-              }">
-                <span class="w-1.5 h-1.5 rounded-full ${isClaimed ? 'bg-emerald-500' : 'bg-slate-400'}"></span>
-                ${escapeHtml(m)} (${isClaimed ? '참여 완료' : '대기 중'})
+                  : 'bg-slate-100 text-slate-400 border border-slate-200'
+              }" title="${escapeHtml(m)} (${isClaimed ? '참여 완료' : '대기 중'})">
+                <span class="w-2 h-2 rounded-full ${isClaimed ? 'bg-emerald-500' : 'bg-slate-400'}"></span>
+                ${escapeHtml(m)}
               </span>
             `;
           })
@@ -756,6 +833,7 @@ function renderHomeView() {
                 <div class="flex items-center gap-1.5 mb-1">
                   <span class="text-[10px] font-mono font-bold text-sky-700 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded">${escapeHtml(trip.inviteCode)}</span>
                   <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(trip.destination)}</span>
+                  <span class="text-[10px] font-extrabold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded">기준:${escapeHtml(trip.baseCurrency || 'KRW')} / 현지:${escapeHtml(trip.localCurrency || 'JPY')}</span>
                 </div>
                 <h4 class="text-sm font-extrabold text-slate-800 truncate">${escapeHtml(trip.title)}</h4>
                 <p class="text-xs text-slate-500 mt-0.5">${escapeHtml(trip.startDate)} ~ ${escapeHtml(trip.endDate)}</p>
@@ -765,7 +843,7 @@ function renderHomeView() {
               </button>
             </div>
             <div class="flex items-center justify-between pt-2 border-t border-slate-100">
-              <div class="flex items-center gap-1.5 flex-wrap">
+              <div class="flex items-center gap-1 flex-wrap">
                 <span class="text-[11px] text-slate-500 font-bold mr-1"><i class="fa-solid fa-users text-[10px] text-sky-600 mr-1"></i>정원 ${members.length}명</span>
                 ${memberTags}
               </div>
@@ -933,13 +1011,10 @@ function renderDetailView() {
   if ($('headerTitleText')) $('headerTitleText').textContent = trip.title;
   if ($('headerInviteCodeValue')) $('headerInviteCodeValue').textContent = trip.inviteCode || 'TR-0000';
   if ($('detailDestinationBadge')) $('detailDestinationBadge').textContent = trip.destination || '여행지';
-  if ($('detailBaseCurrencyBadge')) $('detailBaseCurrencyBadge').textContent = trip.baseCurrency || 'KRW';
+  if ($('detailBaseCurrencyBadge')) {
+    $('detailBaseCurrencyBadge').textContent = `${trip.baseCurrency || 'KRW'} / 현지:${trip.localCurrency || 'JPY'}`;
+  }
   if ($('detailTripTitle')) $('detailTripTitle').textContent = trip.title;
-
-  const claimed = trip.claimedMembers || {};
-  const membersStatusStr = members
-    .map((m) => `${m} (${idx === 0 || claimed[m] ? '참여 완료' : '대기 중'})`)
-    .join(', ');
 
   if ($('detailTripPeriodAndMembers')) {
     $('detailTripPeriodAndMembers').textContent = `${trip.startDate} ~ ${trip.endDate} · 정원 ${members.length}명`;
@@ -1603,7 +1678,7 @@ function renderChecklistTab(trip) {
 }
 
 // ============================================================================
-// 8. 모달 열기 헬퍼 함수들 (환전 및 통화 자동 갱신 반영)
+// 8. 모달 열기 헬퍼 함수들 (환전 및 통화 자동 연동 반영)
 // ============================================================================
 function syncMemberNamesWithHeadcount(headcountInputId, membersInputId) {
   const hcEl = $(headcountInputId);
@@ -1633,17 +1708,18 @@ async function openNewTripModal() {
   if ($('inputNewTripDestination')) $('inputNewTripDestination').value = '';
   if ($('inputNewTripStartDate')) $('inputNewTripStartDate').value = today;
   if ($('inputNewTripEndDate')) $('inputNewTripEndDate').value = today;
-  if ($('selectNewTripCurrency')) $('selectNewTripCurrency').value = 'JPY'; // 기본 엔화 추천
+  if ($('selectNewTripCurrency')) $('selectNewTripCurrency').value = 'KRW';
+  if ($('selectNewTripLocalCurrency')) $('selectNewTripLocalCurrency').value = 'JPY';
   if ($('inputNewTripMyBudget')) $('inputNewTripMyBudget').value = '1500000';
   if ($('inputNewTripExchangeAmount')) $('inputNewTripExchangeAmount').value = '';
   if ($('inputNewTripExchangeKrw')) $('inputNewTripExchangeKrw').value = '';
   if ($('inputNewTripHeadcount')) $('inputNewTripHeadcount').value = '2';
   if ($('inputNewTripMembers')) $('inputNewTripMembers').value = '나, 동행1';
-  
-  // [요구사항 4] 여행 생성 시점에 최신 환율 사전 갱신
+
+  // [요구사항 4] 여행 생성 시점에만 현지 통화 최신 환율 사전 조회
   try {
-    await fetchLiveExchangeRate('JPY');
-    await fetchLiveExchangeRate('USD');
+    const localCurr = $('selectNewTripLocalCurrency')?.value || 'JPY';
+    await fetchLiveExchangeRate(localCurr);
   } catch (e) {}
 
   openModalSafe('modalNewTrip');
@@ -1756,79 +1832,104 @@ function openJoinMemberSelectionModal(trip) {
   openModalSafe('modalSelectJoinMember');
 }
 
+/**
+ * [요구사항 5] 예약 카테고리별 동적 필드 렌더링 (항공, 숙소, 렌터카 편도 반납 완벽 지원)
+ */
 function renderBookingDynamicFields(category, existingData = null) {
   const trip = getActiveTrip();
   const flightMultiBox = $('bookingFlightMultiBox');
   const hotelStayBox = $('bookingHotelStayBox');
+  const rentalCarBox = $('bookingRentalCarBox');
   const standardDateBox = $('bookingStandardDateBox');
 
-  if (flightMultiBox || hotelStayBox || standardDateBox) {
-    if (flightMultiBox) flightMultiBox.classList.toggle('hidden', category !== '항공');
-    if (hotelStayBox) hotelStayBox.classList.toggle('hidden', category !== '숙소');
-    if (standardDateBox) standardDateBox.classList.toggle('hidden', category === '항공' || category === '숙소');
+  if (flightMultiBox) flightMultiBox.classList.toggle('hidden', category !== '항공');
+  if (hotelStayBox) hotelStayBox.classList.toggle('hidden', category !== '숙소');
+  if (rentalCarBox) rentalCarBox.classList.toggle('hidden', category !== '렌터카');
+  if (standardDateBox) standardDateBox.classList.toggle('hidden', category === '항공' || category === '숙소' || category === '렌터카');
 
-    if (category === '항공') {
-      const segContainer = $('flightSegmentsContainer') || $('flightSegmentsListContainer');
-      if (!segContainer) return;
+  if (category === '항공') {
+    const segContainer = $('flightSegmentsContainer') || $('flightSegmentsListContainer');
+    if (!segContainer) return;
 
-      const segments = existingData?.segments || [
-        {
-          flightNo: existingData?.code || '',
-          airline: existingData?.airline || '',
-          dep: existingData?.dep || '',
-          arr: existingData?.arr || '',
-          date: existingData?.date || trip?.startDate || '',
-          time: existingData?.time || '10:00'
-        }
-      ];
+    const segments = existingData?.segments || [
+      {
+        flightNo: existingData?.code || '',
+        airline: existingData?.airline || '',
+        dep: existingData?.dep || '',
+        arr: existingData?.arr || '',
+        date: existingData?.date || trip?.startDate || '',
+        time: existingData?.time || '10:00'
+      }
+    ];
 
-      segContainer.innerHTML = segments
-        .map(
-          (seg, idx) => `
-          <div class="flight-segment-row bg-white border border-sky-200 rounded-xl p-2.5 space-y-2 relative" data-index="${idx}">
-            <div class="flex items-center justify-between">
-              <span class="text-[11px] font-extrabold text-sky-800">구간 ${idx + 1}</span>
-              ${segments.length > 1 ? '<button type="button" data-action="remove-flight-segment" class="text-rose-500 text-xs px-1 hover:underline">삭제</button>' : ''}
-            </div>
-            <div class="flex gap-1.5">
-              <input type="text" placeholder="편명 (예: RS471)" value="${escapeHtml(seg.flightNo || '')}" class="seg-flight-code touch-target flex-1 uppercase font-mono bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs font-bold outline-none" />
-              <button type="button" data-action="lookup-segment-flight" class="touch-target px-2.5 rounded-lg bg-sky-600 text-white text-xs font-extrabold shrink-0">조회</button>
-            </div>
-            <div class="grid grid-cols-2 gap-1.5">
-              <input type="date" value="${escapeHtml(seg.date || '')}" class="seg-flight-date touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
-              <input type="time" value="${escapeHtml(seg.time || '10:00')}" class="seg-flight-time touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
-            </div>
-            <div class="grid grid-cols-2 gap-1.5">
-              <input type="text" placeholder="출발지" value="${escapeHtml(seg.dep || '')}" class="seg-flight-dep touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
-              <input type="text" placeholder="도착지" value="${escapeHtml(seg.arr || '')}" class="seg-flight-arr touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
-            </div>
+    segContainer.innerHTML = segments
+      .map(
+        (seg, idx) => `
+        <div class="flight-segment-row bg-white border border-sky-200 rounded-xl p-2.5 space-y-2 relative" data-index="${idx}">
+          <div class="flex items-center justify-between">
+            <span class="text-[11px] font-extrabold text-sky-800">구간 ${idx + 1}</span>
+            ${segments.length > 1 ? '<button type="button" data-action="remove-flight-segment" class="text-rose-500 text-xs px-1 hover:underline">삭제</button>' : ''}
           </div>
-        `
-        )
-        .join('');
-    } else if (category === '숙소') {
-      if ($('inputHotelCheckInDate')) {
-        $('inputHotelCheckInDate').value =
-          existingData?.hotel?.checkInDate || existingData?.date || trip?.startDate || '';
-      }
-      if ($('inputHotelCheckOutDate')) {
-        $('inputHotelCheckOutDate').value =
-          existingData?.hotel?.checkOutDate || trip?.endDate || trip?.startDate || '';
-      }
-      if ($('inputHotelCheckInTime')) {
-        $('inputHotelCheckInTime').value = existingData?.hotel?.checkInTime || '15:00';
-      }
-      if ($('inputHotelCheckOutTime')) {
-        $('inputHotelCheckOutTime').value = existingData?.hotel?.checkOutTime || '11:00';
-      }
-      updateHotelStayDurationBadge();
-    } else {
-      if ($('inputBookingDate')) {
-        $('inputBookingDate').value = existingData?.date || trip?.startDate || '';
-      }
-      if ($('inputBookingTime')) {
-        $('inputBookingTime').value = existingData?.time || '10:00';
-      }
+          <div class="flex gap-1.5">
+            <input type="text" placeholder="편명 (예: RS471)" value="${escapeHtml(seg.flightNo || '')}" class="seg-flight-code touch-target flex-1 uppercase font-mono bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs font-bold outline-none" />
+            <button type="button" data-action="lookup-segment-flight" class="touch-target px-2.5 rounded-lg bg-sky-600 text-white text-xs font-extrabold shrink-0">조회</button>
+          </div>
+          <div class="grid grid-cols-2 gap-1.5">
+            <input type="date" value="${escapeHtml(seg.date || '')}" class="seg-flight-date touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
+            <input type="time" value="${escapeHtml(seg.time || '10:00')}" class="seg-flight-time touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
+          </div>
+          <div class="grid grid-cols-2 gap-1.5">
+            <input type="text" placeholder="출발지" value="${escapeHtml(seg.dep || '')}" class="seg-flight-dep touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
+            <input type="text" placeholder="도착지" value="${escapeHtml(seg.arr || '')}" class="seg-flight-arr touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
+          </div>
+        </div>
+      `
+      )
+      .join('');
+  } else if (category === '숙소') {
+    if ($('inputHotelCheckInDate')) {
+      $('inputHotelCheckInDate').value = existingData?.hotel?.checkInDate || existingData?.date || trip?.startDate || '';
+    }
+    if ($('inputHotelCheckOutDate')) {
+      $('inputHotelCheckOutDate').value = existingData?.hotel?.checkOutDate || trip?.endDate || trip?.startDate || '';
+    }
+    if ($('inputHotelCheckInTime')) {
+      $('inputHotelCheckInTime').value = existingData?.hotel?.checkInTime || '15:00';
+    }
+    if ($('inputHotelCheckOutTime')) {
+      $('inputHotelCheckOutTime').value = existingData?.hotel?.checkOutTime || '11:00';
+    }
+    updateHotelStayDurationBadge();
+  } else if (category === '렌터카') {
+    if ($('inputRentalPickDate')) {
+      $('inputRentalPickDate').value = existingData?.rental?.pickDate || existingData?.date || trip?.startDate || '';
+    }
+    if ($('inputRentalDropDate')) {
+      $('inputRentalDropDate').value = existingData?.rental?.dropDate || trip?.endDate || trip?.startDate || '';
+    }
+    if ($('inputRentalPickTime')) {
+      $('inputRentalPickTime').value = existingData?.rental?.pickTime || '09:00';
+    }
+    if ($('inputRentalDropTime')) {
+      $('inputRentalDropTime').value = existingData?.rental?.dropTime || '18:00';
+    }
+    if ($('inputRentalPickLoc')) {
+      $('inputRentalPickLoc').value = existingData?.rental?.pickLoc || trip?.destination || '';
+    }
+    const dropLocW = $('rentalDropLocWrapper');
+    const sameChk = $('chkRentalSameLocation');
+    const dropLocInput = $('inputRentalDropLoc');
+    const isDifferent = existingData?.rental?.dropLoc && existingData?.rental?.dropLoc !== existingData?.rental?.pickLoc;
+    if (sameChk) sameChk.checked = !isDifferent;
+    if (dropLocW) dropLocW.classList.toggle('hidden', !isDifferent);
+    if (dropLocInput && isDifferent) dropLocInput.value = existingData.rental.dropLoc;
+    updateRentalDurationBadge();
+  } else {
+    if ($('inputBookingDate')) {
+      $('inputBookingDate').value = existingData?.date || trip?.startDate || '';
+    }
+    if ($('inputBookingTime')) {
+      $('inputBookingTime').value = existingData?.time || '10:00';
     }
   }
 }
@@ -1848,11 +1949,10 @@ async function openAddBookingModal() {
   if ($('inputBookingTitle')) $('inputBookingTitle').value = '';
   if ($('inputBookingCode')) $('inputBookingCode').value = '';
   if ($('inputBookingMemo')) $('inputBookingMemo').value = '';
-  
-  // [요구사항 3, 4] 통화 선택 기본값 세팅 및 실시간 환율 연동
+
   const currSelect = $('selectBookingCurrency');
   if (currSelect) {
-    currSelect.value = trip.baseCurrency || 'JPY';
+    currSelect.value = trip.localCurrency || trip.baseCurrency || 'JPY';
   }
   if ($('inputBookingAmount')) $('inputBookingAmount').value = '';
   if ($('chkBookingAutoSync')) $('chkBookingAutoSync').checked = true;
@@ -1902,11 +2002,9 @@ async function openAddExpenseModal() {
   const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : [priv.myNickname];
 
   if ($('inputExpTitle')) $('inputExpTitle').value = '';
-  
-  // [요구사항 3, 4] 지출 통화 선택 및 열자마자 최신 환율 반영
   const currSelect = $('selectExpCurrency');
   if (currSelect) {
-    currSelect.value = trip.baseCurrency || 'JPY';
+    currSelect.value = trip.localCurrency || trip.baseCurrency || 'JPY';
   }
   if ($('inputExpAmount')) $('inputExpAmount').value = '';
 
@@ -1921,7 +2019,7 @@ async function openAddExpenseModal() {
       .map(
         (m) => `
         <label class="flex items-center gap-2.5 py-1 text-xs font-semibold text-slate-700 cursor-pointer">
-          <input type="checkbox" value="${escapeHtml(m)}" checked class="exp-participant-chk w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
+          <input type="checkbox" value="${escapeHtml(m)}" checked class="exp-participant-chk w-4 h-4 rounded border-slate-300 text-sky-600" />
           <span>${escapeHtml(m)}</span>
         </label>
       `
@@ -1954,7 +2052,7 @@ function setReviewStarRating(ratingVal) {
   starBtns.forEach((btn) => {
     const val = Number(btn.getAttribute('data-star-val'));
     if (val <= num) {
-      btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-400 bg-amber-400 text-white text-xs font-extrabold shadow-2xl';
+      btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-400 bg-amber-400 text-white text-xs font-extrabold shadow-2xs';
     } else {
       btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-300 bg-amber-50 text-amber-500 text-xs font-extrabold';
     }
@@ -2530,6 +2628,28 @@ document.body.addEventListener('click', async (e) => {
         break;
       }
 
+      case 'edit-global-review': {
+        const targetTrip = trips.find((t) => t.id === tripId);
+        const rv = targetTrip?.reviews?.find((r) => r.id === id);
+        if (targetTrip && rv) {
+          editingReviewId = rv.id;
+          editingReviewTripId = targetTrip.id;
+          currentReviewPriceMemo = rv.priceMemo || '';
+          if ($('modalReviewHeading')) $('modalReviewHeading').textContent = '방문 장소 리뷰 수정';
+          populateAllDaySelectors(targetTrip);
+          if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = rv.place || '';
+          if ($('selectReviewCategory')) $('selectReviewCategory').value = rv.category || '맛집/카페';
+          if ($('selectReviewDay')) $('selectReviewDay').value = String(rv.day || 1);
+          setReviewStarRating(rv.rating || 5);
+          if ($('chkReviewRevisit')) $('chkReviewRevisit').checked = Boolean(rv.revisit);
+          if ($('inputReviewContent')) $('inputReviewContent').value = rv.content || '';
+          selectedReviewPhotoIds = Array.isArray(rv.photoIds) ? [...rv.photoIds] : [];
+          renderReviewPhotoThumbnails(targetTrip);
+          openModalSafe('modalAddReview');
+        }
+        break;
+      }
+
       case 'delete-review': {
         const trip = getActiveTrip();
         if (trip && confirm('이 리뷰를 삭제하시겠습니까?')) {
@@ -2615,7 +2735,7 @@ document.body.addEventListener('click', async (e) => {
 });
 
 // --------------------------------------------------------------------------
-// [B] document.body 변경(change) 이벤트 위임
+// [B] document.body 변경(change) 및 입력 이벤트 위임
 // --------------------------------------------------------------------------
 document.body.addEventListener('change', async (e) => {
   try {
@@ -2642,6 +2762,17 @@ document.body.addEventListener('change', async (e) => {
 
     if (target.id === 'inputHotelCheckInDate' || target.id === 'inputHotelCheckOutDate') {
       updateHotelStayDurationBadge();
+      return;
+    }
+
+    if (target.id === 'inputRentalPickDate' || target.id === 'inputRentalDropDate') {
+      updateRentalDurationBadge();
+      return;
+    }
+
+    if (target.id === 'chkRentalSameLocation') {
+      const isSame = target.checked;
+      $('rentalDropLocWrapper')?.classList.toggle('hidden', isSame);
       return;
     }
 
@@ -2673,7 +2804,6 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-    // [요구사항 3, 4] 통화 변경 시 실시간 환율 자동 동기화
     if (target.id === 'selectExpCurrency' || target.id === 'selectBookingCurrency') {
       await syncExpenseModalRateFromApi();
       return;
@@ -2754,9 +2884,6 @@ document.body.addEventListener('change', async (e) => {
   }
 });
 
-// --------------------------------------------------------------------------
-// [C] 입력(input) 및 모든 폼 제출(submit) 이벤트 바인딩
-// --------------------------------------------------------------------------
 document.body.addEventListener('input', (e) => {
   const target = e.target;
   if (!target) return;
@@ -2928,7 +3055,7 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
   }
 });
 
-// [요구사항 2 반영] 새 여행 생성 시 환전 예산 적용 (1. 현재 환율 / 2. 실제 지불 원화 기준 환전 시점 환율)
+// [요구사항 2, 4] 새 여행 생성 시 환전 예산 반영 및 현지 통화 기준 환율 자동 조회
 $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -2936,19 +3063,17 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const destination = ($('inputNewTripDestination')?.value || '').trim() || '여행지';
     const startDate = $('inputNewTripStartDate')?.value || new Date().toISOString().split('T')[0];
     const endDate = $('inputNewTripEndDate')?.value || startDate;
-    const baseCurrency = ($('selectNewTripCurrency')?.value || 'JPY').toUpperCase();
-    let myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
+    const baseCurrency = ($('selectNewTripCurrency')?.value || 'KRW').toUpperCase();
+    const localCurrency = ($('selectNewTripLocalCurrency')?.value || 'JPY').toUpperCase();
     
+    let myBudget = Number($('inputNewTripMyBudget')?.value) || 1500000;
     const exchangeAmount = Number($('inputNewTripExchangeAmount')?.value) || 0;
     const exchangeKrw = Number($('inputNewTripExchangeKrw')?.value) || 0;
 
-    // 환전 예산 계산 로직: 
-    // 1순위: 실제 환전에 지불한 원화(exchangeKrw)가 있으면 총 예산에 합산 반영
-    // 2순위: 외화 금액만 있고 원화가 없으면 현재 환율(getCachedRateToKrw) 기준으로 원화 환산 합산
     if (exchangeKrw > 0) {
       myBudget += exchangeKrw;
     } else if (exchangeAmount > 0) {
-      const liveRate = getCachedRateToKrw(baseCurrency);
+      const liveRate = getCachedRateToKrw(localCurrency);
       myBudget += Math.round(exchangeAmount * liveRate);
     }
 
@@ -2975,6 +3100,7 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       startDate,
       endDate,
       baseCurrency,
+      localCurrency,
       maxMembers: members.length,
       members,
       claimedMembers: { [members[0]]: deviceUid },
@@ -3035,6 +3161,9 @@ $('formCreateSchedule')?.addEventListener('submit', async (e) => {
   }
 });
 
+/**
+ * [요구사항 5] 예약 폼 제출 핸들러 (렌터카 편도 반납 및 일정 연동 완벽 반영)
+ */
 $('formCreateBooking')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -3044,7 +3173,7 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
     const category = $('selectBookingCategory')?.value || '항공';
     const code = ($('inputBookingCode')?.value || '').trim().toUpperCase();
     const memo = ($('inputBookingMemo')?.value || '').trim();
-    const currency = ($('selectBookingCurrency')?.value || trip.baseCurrency || 'JPY').toUpperCase();
+    const currency = ($('selectBookingCurrency')?.value || trip.localCurrency || 'JPY').toUpperCase();
     const amount = Number($('inputBookingAmount')?.value) || 0;
     const autoSync = $('chkBookingAutoSync')?.checked !== false;
     const payer = $('selectBookingPayer')?.value || getMyPrivateInfo(trip).myNickname;
@@ -3159,6 +3288,54 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
           });
         }
       }
+    } else if (category === '렌터카') {
+      const pickDate = $('inputRentalPickDate')?.value || trip.startDate;
+      const dropDate = $('inputRentalDropDate')?.value || trip.endDate;
+      const pickTime = $('inputRentalPickTime')?.value || '09:00';
+      const dropTime = $('inputRentalDropTime')?.value || '18:00';
+      const pickLoc = ($('inputRentalPickLoc')?.value || '').trim() || '대여지';
+      const isSameLoc = $('chkRentalSameLocation')?.checked;
+      const dropLoc = isSameLoc ? pickLoc : (($('inputRentalDropLoc')?.value || '').trim() || pickLoc);
+
+      if (!title) {
+        title = '렌터카 대여';
+      }
+
+      newBookingObj.title = title;
+      newBookingObj.date = pickDate;
+      newBookingObj.time = pickTime;
+      newBookingObj.rental = {
+        pickDate,
+        pickTime,
+        dropDate,
+        dropTime,
+        pickLoc,
+        dropLoc
+      };
+
+      if (autoSync) {
+        const pickDay = inferDayNumberFromDate(trip, pickDate);
+        trip.itineraries.push({
+          id: `it_bk_rental_pick_${bookingId}`,
+          bookingId: bookingId,
+          day: pickDay,
+          time: pickTime,
+          place: `[렌터카 대여] ${title} (${pickLoc})`,
+          memo: `반납: ${dropDate} ${dropTime} (${dropLoc}) · ${memo}`.trim()
+        });
+
+        const dropDay = inferDayNumberFromDate(trip, dropDate);
+        if (dropDay !== pickDay) {
+          trip.itineraries.push({
+            id: `it_bk_rental_drop_${bookingId}`,
+            bookingId: bookingId,
+            day: dropDay,
+            time: dropTime,
+            place: `[렌터카 반납] ${title} (${dropLoc})`,
+            memo: `${memo}`.trim()
+          });
+        }
+      }
     } else {
       const date = $('inputBookingDate')?.value || trip.startDate;
       const time = $('inputBookingTime')?.value || '10:00';
@@ -3242,7 +3419,7 @@ $('formCreateExpense')?.addEventListener('submit', async (e) => {
     if (!trip) return;
 
     const title = ($('inputExpTitle')?.value || '').trim();
-    const currency = ($('selectExpCurrency')?.value || 'JPY').toUpperCase();
+    const currency = ($('selectExpCurrency')?.value || trip.localCurrency || 'JPY').toUpperCase();
     const amount = Number($('inputExpAmount')?.value) || 0;
     const rateToKrw = currency === 'KRW' ? 1 : Number($('inputExpAppliedRate')?.value) || 1;
     const payer = ($('selectExpPayer')?.value || '').trim() || getMyPrivateInfo(trip).myNickname;
@@ -3296,6 +3473,7 @@ $('formCreateExpense')?.addEventListener('submit', async (e) => {
     await syncTripToFirestore(trip);
   } catch (err) {
     console.error('지출 저장 오류:', err);
+    alert('지출 내역 저장 중 오류가 발생했습니다.');
   }
 });
 

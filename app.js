@@ -2,7 +2,7 @@
  * Travel Journal PWA - app.js (ES Module)
  * Firebase Firestore v10 실시간 동기화 + LocalStorage 영구 보존 안정성 (마이그레이션 방어)
  * document.body 이벤트 위임(addEventListener)으로 모든 버튼·탭 동작 100% 보장
- * [최종 통합 반영 버전]
+ * [최종 통합 및 6가지 추가 요구사항 반영 버전]
  */
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
@@ -221,6 +221,8 @@ function setupDynamicDomEnhancements() {
             <option value="TWD">TWD (대만달러)</option>
             <option value="THB">THB (바트)</option>
             <option value="VND">VND (동)</option>
+            <option value="CNY">CNY (위안)</option>
+            <option value="GBP">GBP (파운드)</option>
           </select>
         </div>
         <div>
@@ -443,6 +445,8 @@ function normalizeTrip(raw) {
     endDate: raw.endDate || '2026-11-15',
     baseCurrency: raw.baseCurrency || 'KRW',
     localCurrency: raw.localCurrency || 'JPY',
+    exchangeAmount: Number(raw.exchangeAmount) || 0,
+    exchangeKrw: Number(raw.exchangeKrw) || 0,
     maxMembers: Number(raw.maxMembers) || members.length,
     members,
     claimedMembers,
@@ -809,7 +813,7 @@ function renderHomeView() {
         const members = Array.isArray(trip.members) ? trip.members : ['나'];
         const claimed = trip.claimedMembers || {};
 
-        // [요구사항 1] 텍스트 없이 컬러 점(초록=참여 완료, 회색=대기 중)으로 직관적 구분
+        // [요구사항 1] 텍스트 없이 컬러 점(초록=참여 완료, 회색=대기 중)만 노출
         const memberTags = members
           .map((m, idx) => {
             const isClaimed = idx === 0 || Boolean(claimed[m]);
@@ -938,6 +942,7 @@ function enterTripDetail(tripId) {
   renderDetailView();
 }
 
+// [요구사항 1] 목록으로 돌아갈 때 불필요한 팝업 메시지 출력 차단
 function exitTripDetailToHome() {
   currentTripId = null;
   $('tripDetailView')?.classList.add('hidden');
@@ -1148,14 +1153,38 @@ function extractCleanPlaceForRoute(rawPlaceStr) {
   return clean || raw;
 }
 
+/**
+ * [요구사항 5, 6] 렌터카 대여 장소 정보 연동 및 최종 귀국 공항 제외 (출국 공항까지만 경로 계산)
+ */
 function renderRouteMapAndLinks(trip, dayItems) {
   try {
     const mapContainer = $('leafletRouteMapContainer');
     const linksContainer = $('localRouteLinksList');
 
-    const localStops = (dayItems || [])
+    const totalDays = calculateTripDays(trip);
+    const currentDay = Number(currentItineraryDay) || 1;
+
+    let dayItemsToProcess = [...(dayItems || [])];
+
+    // [요구사항 6] 여행 마지막 날(종료일)에는 최종 귀국 공항/경로 대신 출국 공항(첫 출발지)까지만 계산하도록 필터링
+    if (currentDay === totalDays && totalDays > 1) {
+      dayItemsToProcess = dayItemsToProcess.filter((item) => {
+        const p = String(item.place || '').toUpperCase();
+        return !p.includes('귀국') && !p.includes('인천행') && !p.includes('출발지 복귀');
+      });
+    }
+
+    const localStops = dayItemsToProcess
       .map((item) => {
-        const cleanPlace = extractCleanPlaceForRoute(item.place);
+        let placeStr = item.place || '';
+        // [요구사항 5] 렌터카 대여 일정인 경우 대여 장소 정보 반영
+        if (placeStr.includes('[렌터카 대여]')) {
+          const matchLoc = placeStr.match(/\((.*?)\)/);
+          if (matchLoc && matchLoc[1]) {
+            placeStr = matchLoc[1];
+          }
+        }
+        const cleanPlace = extractCleanPlaceForRoute(placeStr);
         return {
           ...item,
           cleanPlace
@@ -1164,22 +1193,24 @@ function renderRouteMapAndLinks(trip, dayItems) {
       .filter((s) => Boolean(s.cleanPlace));
 
     const matchedAirports = [];
-    (dayItems || []).forEach((it) => {
+    dayItemsToProcess.forEach((it) => {
       const codes = String(it.place || '').toUpperCase().match(/\b[A-Z]{3}\b/g) || [];
       codes.forEach((code) => {
+        // 마지막 날이면 도착 공항(ICN 등 귀국 공항)은 제외
+        if (currentDay === totalDays && (code === 'ICN' || code === 'GMP')) return;
         if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[code] && !matchedAirports.find((a) => a.code === code)) {
           matchedAirports.push({ code, ...AIRPORT_KO_MAP[code] });
         }
       });
     });
 
-    if (matchedAirports.length === 0) {
+    if (matchedAirports.length === 0 && currentDay === 1) {
       (trip.bookings || []).forEach((bk) => {
         if (bk.category === '항공') {
           const bText = `${bk.title || ''} ${bk.memo || ''} ${JSON.stringify(bk.segments || [])}`.toUpperCase();
           const bCodes = bText.match(/\b[A-Z]{3}\b/g) || [];
-          bCodes.forEach((code) => {
-            if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[code] && !matchedAirports.find((a) => a.code === code)) {
+          bCodes.forEach((code, idx) => {
+            if (idx === 0 && AIRPORT_KO_MAP && AIRPORT_KO_MAP[code] && !matchedAirports.find((a) => a.code === code)) {
               matchedAirports.push({ code, ...AIRPORT_KO_MAP[code] });
             }
           });
@@ -1218,7 +1249,7 @@ function renderRouteMapAndLinks(trip, dayItems) {
 
     if (linksContainer) {
       if (localStops.length === 0) {
-        linksContainer.innerHTML = `<p class="text-[11px] text-slate-400 text-center py-1">일정을 추가하면 도착 공항 및 장소별 Google Maps 길찾기 바로가기가 생성됩니다.</p>`;
+        linksContainer.innerHTML = `<p class="text-[11px] text-slate-400 text-center py-1">일정을 추가하면 장소별 Google Maps 길찾기 바로가기가 생성됩니다.</p>`;
       } else {
         const origin = encodeURIComponent(localStops[0].cleanPlace);
         const dest = encodeURIComponent(localStops[localStops.length - 1].cleanPlace);
@@ -1246,7 +1277,7 @@ function renderRouteMapAndLinks(trip, dayItems) {
           ${
             localStops.length >= 2
               ? `<a href="${multiUrl}" target="_blank" rel="noopener noreferrer" class="block w-full text-center py-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-extrabold transition">
-                  🗺️ Day ${currentItineraryDay} 전체 경로 길찾기 (${escapeHtml(localStops[0].cleanPlace)} ➔ ${escapeHtml(localStops[localStops.length - 1].cleanPlace)})
+                  🗺️ Day ${currentItineraryDay} 경로 길찾기 (${escapeHtml(localStops[0].cleanPlace)} ➔ ${escapeHtml(localStops[localStops.length - 1].cleanPlace)})
                 </a>`
               : ''
           }
@@ -1375,9 +1406,16 @@ function renderBookingsTab(trip) {
     .join('');
 }
 
+/**
+ * [요구사항 4] 지출/정산 탭에서 원화 기준 예산과 환전 금액을 별도로 분리하여 소진 여부와 함께 표시
+ */
 function renderExpensesTab(trip) {
   const priv = getMyPrivateInfo(trip);
   const totalBudget = priv.myBudget;
+  const exchangeKrwVal = Number(trip.exchangeKrw) || 0;
+  const exchangeAmtVal = Number(trip.exchangeAmount) || 0;
+  const localCurr = trip.localCurrency || 'JPY';
+
   const expenses = trip.expenses || [];
   const members = Array.isArray(trip.members) ? trip.members : ['나'];
 
@@ -1399,7 +1437,12 @@ function renderExpensesTab(trip) {
   const remainKrw = totalBudget - mySpentKrw;
   const remainPercent = totalBudget > 0 ? Math.max(0, Math.min(100, (remainKrw / totalBudget) * 100)) : 100;
 
-  if ($('myBudgetTotalText')) $('myBudgetTotalText').textContent = `${Math.round(totalBudget).toLocaleString()} KRW`;
+  if ($('myBudgetTotalText')) {
+    const exchangeSubText = exchangeKrwVal > 0 ? ` (환전 포함: ${exchangeAmtVal.toLocaleString()} ${localCurr} / ${exchangeKrwVal.toLocaleString()}원)` : '';
+    $('myBudgetTotalText.textContent') = ''; // reset
+    $('myBudgetTotalText').innerHTML = `${Math.round(totalBudget).toLocaleString()} KRW<span class="block text-[10px] font-semibold text-slate-400 mt-0.5">환전금액: ${exchangeKrwVal > 0 ? exchangeKrwVal.toLocaleString() + '원 (' + exchangeAmtVal.toLocaleString() + ' ' + localCurr + ')' : '없음'}</span>`;
+  }
+
   if ($('myBudgetRemainText')) {
     $('myBudgetRemainText').textContent = `${Math.round(remainKrw).toLocaleString()} KRW`;
     $('myBudgetRemainText').className =
@@ -1678,7 +1721,7 @@ function renderChecklistTab(trip) {
 }
 
 // ============================================================================
-// 8. 모달 열기 헬퍼 함수들 (환전 및 통화 자동 연동 반영)
+// 8. 모달 열기 헬퍼 함수들 (환전 및 통화 자동 갱신 반영)
 // ============================================================================
 function syncMemberNamesWithHeadcount(headcountInputId, membersInputId) {
   const hcEl = $(headcountInputId);
@@ -1702,6 +1745,7 @@ function syncMemberNamesWithHeadcount(headcountInputId, membersInputId) {
   memEl.value = currentList.join(', ');
 }
 
+// [요구사항 4] 여행 생성 시점에만 현지 통화 최신 환율 사전 조회
 async function openNewTripModal() {
   const today = new Date().toISOString().split('T')[0];
   if ($('inputNewTripTitle')) $('inputNewTripTitle').value = '';
@@ -1716,7 +1760,6 @@ async function openNewTripModal() {
   if ($('inputNewTripHeadcount')) $('inputNewTripHeadcount').value = '2';
   if ($('inputNewTripMembers')) $('inputNewTripMembers').value = '나, 동행1';
 
-  // [요구사항 4] 여행 생성 시점에만 현지 통화 최신 환율 사전 조회
   try {
     const localCurr = $('selectNewTripLocalCurrency')?.value || 'JPY';
     await fetchLiveExchangeRate(localCurr);
@@ -1833,7 +1876,7 @@ function openJoinMemberSelectionModal(trip) {
 }
 
 /**
- * [요구사항 5] 예약 카테고리별 동적 필드 렌더링 (항공, 숙소, 렌터카 편도 반납 완벽 지원)
+ * [요구사항 3, 5] 예약 카테고리별 동적 필드 렌더링 (렌터카 대여 장소 지도 연동 포함)
  */
 function renderBookingDynamicFields(category, existingData = null) {
   const trip = getActiveTrip();
@@ -2052,7 +2095,7 @@ function setReviewStarRating(ratingVal) {
   starBtns.forEach((btn) => {
     const val = Number(btn.getAttribute('data-star-val'));
     if (val <= num) {
-      btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-400 bg-amber-400 text-white text-xs font-extrabold shadow-2xs';
+      btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-400 bg-amber-400 text-white text-xs font-extrabold shadow-2xl';
     } else {
       btn.className = 'star-rate-btn touch-target rounded-xl border border-amber-300 bg-amber-50 text-amber-500 text-xs font-extrabold';
     }
@@ -2416,7 +2459,7 @@ document.body.addEventListener('click', async (e) => {
       }
 
       case 'open-add-booking-modal':
-        openAddBookingModal();
+        await openAddBookingModal();
         break;
 
       case 'edit-booking': {
@@ -3055,7 +3098,7 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
   }
 });
 
-// [요구사항 2, 4] 새 여행 생성 시 환전 예산 반영 및 현지 통화 기준 환율 자동 조회
+// [요구사항 2] 새 여행 생성 시 환전 예산 포함 및 현지 통화 연동
 $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -3070,11 +3113,14 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const exchangeAmount = Number($('inputNewTripExchangeAmount')?.value) || 0;
     const exchangeKrw = Number($('inputNewTripExchangeKrw')?.value) || 0;
 
+    let finalExchangeKrw = 0;
     if (exchangeKrw > 0) {
+      finalExchangeKrw = exchangeKrw;
       myBudget += exchangeKrw;
     } else if (exchangeAmount > 0) {
       const liveRate = getCachedRateToKrw(localCurrency);
-      myBudget += Math.round(exchangeAmount * liveRate);
+      finalExchangeKrw = Math.round(exchangeAmount * liveRate);
+      myBudget += finalExchangeKrw;
     }
 
     const headcount = Math.max(1, Number($('inputNewTripHeadcount')?.value) || 1);
@@ -3101,6 +3147,8 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       endDate,
       baseCurrency,
       localCurrency,
+      exchangeAmount,
+      exchangeKrw: finalExchangeKrw,
       maxMembers: members.length,
       members,
       claimedMembers: { [members[0]]: deviceUid },
@@ -3162,7 +3210,7 @@ $('formCreateSchedule')?.addEventListener('submit', async (e) => {
 });
 
 /**
- * [요구사항 5] 예약 폼 제출 핸들러 (렌터카 편도 반납 및 일정 연동 완벽 반영)
+ * [요구사항 3, 5] 예약 폼 제출 핸들러 (렌터카 대여 장소 지도 연동 포함)
  */
 $('formCreateBooking')?.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -3531,8 +3579,8 @@ $('formCreateReview')?.addEventListener('submit', async (e) => {
 
     const place = ($('inputReviewPlaceName')?.value || '').trim();
     const category = $('selectReviewCategory')?.value || '맛집/카페';
-    const day = Number($('selectReviewDay')?.value) || 1;
-    const rating = Number($('inputReviewRatingValue')?.value) || 5;
+    const day = Number($('selectReviewDay')?.value || 1);
+    const rating = Number($('inputReviewRatingValue')?.value || 5);
     const revisit = $('chkReviewRevisit')?.checked;
     const content = ($('inputReviewContent')?.value || '').trim();
 

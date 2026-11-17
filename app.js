@@ -227,6 +227,84 @@ function populateCurrencySelect(selectElement, trip, selectedValue) {
 }
 
 // ============================================================================
+// [추가] 통화 추가 드롭다운 선택 시 전 세계 통화 선택 모달을 띄워주는 핸들러
+// ============================================================================
+async function handleCurrencyDropdownChange(selectElement, trip, isFromNewTrip = false) {
+  if (!selectElement || selectElement.value !== 'ADD_CUSTOM_CURRENCY') return false;
+
+  const gridContainer = $('currencySelectorButtonsGrid');
+  if (!gridContainer) {
+    alert('통화 선택 팝업 요소를 찾을 수 없습니다. index.html에 modalCurrencySelector가 있는지 확인해주세요.');
+    selectElement.value = trip?.baseCurrency || 'KRW';
+    return false;
+  }
+
+  // 전 세계 주요 통화 리스트를 버튼 형태로 렌더링
+  gridContainer.innerHTML = GLOBAL_CURRENCY_OPTIONS.map((opt) => `
+    <button type="button" data-action="pick-custom-currency" data-code="${opt.code}" class="touch-target p-2.5 rounded-xl border border-slate-200 hover:border-sky-500 hover:bg-sky-50 text-left transition flex flex-col justify-center">
+      <span class="text-xs font-extrabold text-slate-800">${opt.code}</span>
+      <span class="text-[10px] text-slate-500 truncate">${opt.name.replace(/^[A-Z]+\s*\((.*?)\)$/, '$1')}</span>
+    </button>
+  `).join('');
+
+  // z-[9999]로 설정된 통화 선택 모달을 맨 앞으로 열기
+  openModalSafe('modalCurrencySelector');
+
+  return new Promise((resolve) => {
+    const clickHandler = async (e) => {
+      const btn = e.target.closest('[data-action="pick-custom-currency"]');
+      if (!btn) return;
+
+      const chosenCode = btn.getAttribute('data-code');
+      gridContainer.removeEventListener('click', clickHandler);
+      closeModalSafe('modalCurrencySelector');
+
+      if (chosenCode && chosenCode.length === 3) {
+        if (trip) {
+          if (!trip.customCurrencies) trip.customCurrencies = [];
+          if (!trip.customCurrencies.includes(chosenCode)) {
+            trip.customCurrencies.push(chosenCode);
+            saveLocalData();
+            await syncTripToFirestore(trip);
+          }
+        }
+        
+        // 최신 환율 API 자동 호출
+        try {
+          await fetchLiveExchangeRate(chosenCode);
+        } catch (err) {}
+
+        populateCurrencySelect(selectElement, trip, chosenCode);
+        
+        // 상황에 맞는 알림 팝업 1회 출력
+        if (isFromNewTrip) {
+          alert(`'${chosenCode}' 통화가 추가되었으며, 기본 통화로 지정되었습니다.`);
+        } else {
+          alert(`'${chosenCode}' 통화가 추가되었습니다.`);
+        }
+        
+        resolve(true);
+      } else {
+        selectElement.value = trip?.baseCurrency || 'KRW';
+        resolve(false);
+      }
+    };
+
+    gridContainer.onclick = null;
+    gridContainer.addEventListener('click', clickHandler);
+    
+    const closeBtn = document.querySelector('#modalCurrencySelector [data-close-modal]');
+    if (closeBtn) {
+      closeBtn.onclick = () => {
+        closeModalSafe('modalCurrencySelector');
+        selectElement.value = trip?.baseCurrency || 'KRW';
+        resolve(false);
+      };
+    }
+  });
+}
+
+// ============================================================================
 // 4. UI 동적 보정 및 환전 예산/통화 확장 필드 주입
 // ============================================================================
 function setupDynamicDomEnhancements() {
@@ -399,7 +477,7 @@ function normalizeTrip(raw) {
     destination: raw.destination || '여행지',
     startDate: raw.startDate || '2026-11-12',
     endDate: raw.endDate || '2026-11-15',
-    baseCurrency: 'KRW', // 기본 통화 KRW 고정
+    baseCurrency: raw.baseCurrency || 'KRW', // 기본 통화에 전달받은 baseCurrency를 우선 사용
     customCurrencies: Array.isArray(raw.customCurrencies) ? raw.customCurrencies : ['JPY', 'USD', 'EUR'],
     maxMembers: Number(raw.maxMembers) || members.length,
     members,
@@ -3139,13 +3217,20 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       members = members.slice(0, headcount);
     }
 
+    // 👇 [수정 포인트] 기본 상시 통화 외에 사용자가 고른 기본 통화도 커스텀 리스트에 함께 담아주기
+    const customCurrencies = ['JPY', 'USD', 'EUR'];
+    if (!customCurrencies.includes(baseCurrency)) {
+      customCurrencies.push(baseCurrency);
+    }
+
     const newTrip = normalizeTrip({
       id: 'trip_' + Date.now(),
       title,
       destination,
       startDate,
       endDate,
-      baseCurrency,
+      baseCurrency,      // 선택한 기본 통화 전달
+      customCurrencies,  // 추가된 통화 목록 전달
       maxMembers: members.length,
       members,
       claimedMembers: { [members[0]]: deviceUid },

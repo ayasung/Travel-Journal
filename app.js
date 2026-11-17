@@ -205,10 +205,8 @@ function registerServiceWorkerSafe() {
 // ============================================================================
 function populateCurrencySelect(selectElement, trip, selectedValue) {
   if (!selectElement) return;
-
   const customCurrencies = trip && Array.isArray(trip.customCurrencies) ? trip.customCurrencies : [];
   
-  // 기본 상시 선택 통화: KRW(기본고정), JPY, USD, EUR
   let html = `
     <option value="KRW">KRW (한국 원)</option>
     <option value="JPY">JPY (일본 엔)</option>
@@ -216,66 +214,16 @@ function populateCurrencySelect(selectElement, trip, selectedValue) {
     <option value="EUR">EUR (유로)</option>
   `;
 
-  // 추가로 등록된 커스텀 통화들 표시
   customCurrencies.forEach(code => {
     if (!['KRW', 'JPY', 'USD', 'EUR'].includes(code)) {
       const found = GLOBAL_CURRENCY_OPTIONS.find(o => o.code === code);
-      const label = found ? found.name : `${code} (기타 통화)`;
-      html += `<option value="${code}">${label}</option>`;
+      html += `<option value="${code}">${found ? found.name : code}</option>`;
     }
   });
 
-  // 맨 하단에 '통화 추가' 옵션 배치
   html += `<option value="ADD_CUSTOM_CURRENCY" class="font-extrabold text-sky-600">➕ 통화 추가...</option>`;
-
   selectElement.innerHTML = html;
-  
-  const allValidCodes = ['KRW', 'JPY', 'USD', 'EUR', ...customCurrencies];
-  selectElement.value = selectedValue && allValidCodes.includes(selectedValue) ? selectedValue : (trip?.baseCurrency || 'JPY');
-}
-
-async function handleCurrencyDropdownChange(selectElement, trip) {
-  if (!selectElement || selectElement.value !== 'ADD_CUSTOM_CURRENCY') return false;
-
-  const optionsText = GLOBAL_CURRENCY_OPTIONS.map((o, idx) => `${idx + 1}. ${o.name}`).join('\n');
-  const userInput = prompt(`추가할 통화 번호나 코드를 입력해주세요:\n\n${optionsText}\n\n(예: GBP 또는 4)`);
-
-  if (!userInput) {
-    selectElement.value = trip?.baseCurrency || 'JPY';
-    return false;
-  }
-
-  let chosenCode = '';
-  const trimmed = userInput.trim().toUpperCase();
-  const numericIdx = Number(trimmed);
-
-  if (!isNaN(numericIdx) && numericIdx >= 1 && numericIdx <= GLOBAL_CURRENCY_OPTIONS.length) {
-    chosenCode = GLOBAL_CURRENCY_OPTIONS[numericIdx - 1].code;
-  } else {
-    const matched = GLOBAL_CURRENCY_OPTIONS.find(o => o.code === trimmed);
-    chosenCode = matched ? matched.code : trimmed;
-  }
-
-  if (chosenCode && chosenCode.length === 3) {
-    if (!trip.customCurrencies) trip.customCurrencies = [];
-    if (!trip.customCurrencies.includes(chosenCode)) {
-      trip.customCurrencies.push(chosenCode);
-      saveLocalData();
-      await syncTripToFirestore(trip);
-    }
-    // 환율 API 자동 조회
-    try {
-      await fetchLiveExchangeRate(chosenCode);
-    } catch (e) {}
-
-    populateCurrencySelect(selectElement, trip, chosenCode);
-    alert(`'${chosenCode}' 통화가 성공적으로 추가되었습니다!`);
-    return true;
-  } else {
-    alert('올바른 통화 코드나 번호를 입력해주세요.');
-    selectElement.value = trip?.baseCurrency || 'JPY';
-    return false;
-  }
+  selectElement.value = selectedValue || 'KRW';
 }
 
 // ============================================================================
@@ -1736,24 +1684,14 @@ async function openNewTripModal() {
   if ($('inputNewTripStartDate')) $('inputNewTripStartDate').value = today;
   if ($('inputNewTripEndDate')) $('inputNewTripEndDate').value = today;
   
-  // 통화 선택 세팅 (기본 KRW, 현지통화 선택용 JPY/USD/EUR + 통화 추가)
   const newTripCurrencySelect = $('selectNewTripCurrency');
   if (newTripCurrencySelect) {
-    populateCurrencySelect(newTripCurrencySelect, { customCurrencies: ['JPY', 'USD', 'EUR'] }, 'JPY');
+    populateCurrencySelect(newTripCurrencySelect, { customCurrencies: ['JPY', 'USD', 'EUR'] }, 'KRW');
   }
 
   if ($('inputNewTripMyBudget')) $('inputNewTripMyBudget').value = '1500000';
-  if ($('inputNewTripExchangeAmount')) $('inputNewTripExchangeAmount').value = '';
-  if ($('inputNewTripExchangeKrw')) $('inputNewTripExchangeKrw').value = '';
   if ($('inputNewTripHeadcount')) $('inputNewTripHeadcount').value = '2';
   if ($('inputNewTripMembers')) $('inputNewTripMembers').value = '나, 동행1';
-  
-  // [요구사항 4] 여행 생성 시점에 최신 환율 사전 갱신
-  try {
-    await fetchLiveExchangeRate('JPY');
-    await fetchLiveExchangeRate('USD');
-    await fetchLiveExchangeRate('EUR');
-  } catch (e) {}
 
   openModalSafe('modalNewTrip');
 }
@@ -3097,7 +3035,7 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
   }
 });
 
-// 새 여행 생성 시 환전 예산 및 통화 설정 반영 (기본 KRW + 선택 통화)
+// 새 여행 생성 시 예산 및 통화 설정 반영
 $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -3106,18 +3044,8 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const startDate = $('inputNewTripStartDate')?.value || new Date().toISOString().split('T')[0];
     const endDate = $('inputNewTripEndDate')?.value || startDate;
     
-    const selectedCurrency = $('selectNewTripCurrency')?.value || 'JPY';
-    let myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
-    
-    const exchangeAmount = Number($('inputNewTripExchangeAmount')?.value) || 0;
-    const exchangeKrw = Number($('inputNewTripExchangeKrw')?.value) || 0;
-
-    if (exchangeKrw > 0) {
-      myBudget += exchangeKrw;
-    } else if (exchangeAmount > 0) {
-      const liveRate = getCachedRateToKrw(selectedCurrency);
-      myBudget += Math.round(exchangeAmount * liveRate);
-    }
+    const baseCurrency = ($('selectNewTripCurrency')?.value || 'KRW').toUpperCase();
+    const myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
 
     const headcount = Math.max(1, Number($('inputNewTripHeadcount')?.value) || 1);
     const rawMembers = $('inputNewTripMembers')?.value || '나';
@@ -3135,19 +3063,13 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       members = members.slice(0, headcount);
     }
 
-    const customCurrencies = ['JPY', 'USD', 'EUR'];
-    if (!customCurrencies.includes(selectedCurrency)) {
-      customCurrencies.push(selectedCurrency);
-    }
-
     const newTrip = normalizeTrip({
       id: 'trip_' + Date.now(),
       title,
       destination,
       startDate,
       endDate,
-      baseCurrency: 'KRW',
-      customCurrencies,
+      baseCurrency,
       maxMembers: members.length,
       members,
       claimedMembers: { [members[0]]: deviceUid },
@@ -3156,13 +3078,7 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     });
 
     trips.unshift(newTrip);
-    privateBudgets[newTrip.id] = { 
-      myBudget, 
-      myNickname: members[0],
-      exchangeAmount,
-      exchangeCurrency: selectedCurrency,
-      exchangeKrw
-    };
+    privateBudgets[newTrip.id] = { myBudget, myNickname: members[0] };
     saveLocalData();
 
     closeModalSafe('modalNewTrip');

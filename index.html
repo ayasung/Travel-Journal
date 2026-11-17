@@ -548,6 +548,26 @@
   </div>
 
   <!-- ======================================================================
+       [추가] 전 세계 통화 선택 모달 (#modalCurrencySelector)
+       ====================================================================== -->
+  <div id="modalCurrencySelector" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-sm rounded-2xl p-5 border border-slate-200 shadow-xl space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <div>
+          <h3 class="text-sm font-extrabold text-slate-800">💱 추가할 통화 선택</h3>
+          <p class="text-[11px] text-slate-500 mt-0.5">목록에서 원하는 국가의 통화를 선택하세요.</p>
+        </div>
+        <button type="button" data-close-modal="modalCurrencySelector" class="touch-target text-slate-400 hover:text-slate-600">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <div id="currencySelectorButtonsGrid" class="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto no-scrollbar py-1">
+        <!-- 통화 버튼들이 여기에 동적으로 생성됩니다 -->
+      </div>
+    </div>
+  </div>
+  
+  <!-- ======================================================================
        [모달 2] 일정 추가/수정 모달 (#modalAddSchedule)
        ====================================================================== -->
   <div id="modalAddSchedule" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">

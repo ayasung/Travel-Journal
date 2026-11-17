@@ -1775,16 +1775,23 @@ async function openNewTripModal() {
 function openEditTripInfoModal() {
   const trip = getActiveTrip();
   if (!trip) return;
-  const members = Array.isArray(trip.members) ? trip.members : ['나'];
+  const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : ['나'];
 
   if ($('inputEditTripTitle')) $('inputEditTripTitle').value = trip.title || '';
   if ($('inputEditTripDestination')) $('inputEditTripDestination').value = trip.destination || '';
   if ($('inputEditTripStartDate')) $('inputEditTripStartDate').value = trip.startDate || '';
   if ($('inputEditTripEndDate')) $('inputEditTripEndDate').value = trip.endDate || '';
-  if ($('selectEditTripCurrency')) $('selectEditTripCurrency').value = 'KRW';
+  
+  // [보완] 추가된 커스텀 통화 목록이 누락되지 않도록 반영
+  const editCurrSelect = $('selectEditTripCurrency');
+  if (editCurrSelect) {
+    populateCurrencySelect(editCurrSelect, trip, trip.baseCurrency || 'KRW');
+  }
+
+  // [보완] 참여자 인원수 및 닉네임 목록이 1명으로 고정되지 않고 완벽히 동기화되도록 세팅
   if ($('inputEditTripHeadcount')) $('inputEditTripHeadcount').value = String(members.length);
   if ($('inputEditTripMembers')) $('inputEditTripMembers').value = members.join(', ');
-
+  
   openModalSafe('modalEditTripInfo');
 }
 
@@ -3583,17 +3590,9 @@ $('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
   const exchangeCurrency = $('selectPrivateExchangeCurrency')?.value || trip.baseCurrency || 'JPY';
   const exchangeKrw = Number($('inputPrivateExchangeKrw')?.value) || 0;
 
-  let computedBudget = val;
-  if (exchangeKrw > 0) {
-    computedBudget += exchangeKrw;
-  } else if (exchangeAmount > 0) {
-    const rate = getCachedRateToKrw(exchangeCurrency);
-    computedBudget += Math.round(exchangeAmount * rate);
-  }
-
   const prev = getMyPrivateInfo(trip);
   privateBudgets[trip.id] = { 
-    myBudget: computedBudget > 0 ? computedBudget : val, 
+    myBudget: val, 
     myNickname: prev.myNickname,
     exchangeAmount,
     exchangeCurrency,

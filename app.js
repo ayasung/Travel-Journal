@@ -386,10 +386,18 @@ function setupDynamicDomEnhancements() {
             </div>
             <div class="grid grid-cols-2 gap-2">
               <div>
-                <label class="text-xs font-semibold text-slate-600 block mb-1">기본 통화 (KRW 고정)</label>
-                <select id="selectEditTripCurrency" disabled class="touch-target w-full bg-slate-100 border border-slate-200 rounded-xl px-3 text-xs font-bold text-slate-600 cursor-not-allowed">
+                <label class="text-xs font-semibold text-slate-600 block mb-1">기본 통화</label>
+                <select id="selectEditTripCurrency" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
                   <option value="KRW">KRW (한국 원)</option>
+                  <option value="JPY">JPY (일본 엔)</option>
+                  <option value="USD">USD (미국 달러)</option>
+                  <option value="EUR">EUR (유로)</option>
+                  <option value="ADD_CUSTOM_CURRENCY" class="font-extrabold text-sky-600">➕ 통화 추가...</option>
                 </select>
+              </div>
+              <div>
+                <label class="text-xs font-semibold text-slate-600 block mb-1">총 참여 인원수(명)</label>
+                <input id="inputEditTripHeadcount" type="number" min="1" max="30" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-extrabold outline-none focus:border-sky-500" required />
               </div>
               <div>
                 <label class="text-xs font-semibold text-slate-600 block mb-1">총 참여 인원수(명)</label>

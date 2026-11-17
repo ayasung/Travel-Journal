@@ -2839,6 +2839,18 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
+    // 방장 수정 모달의 기본 통화 선택 및 '통화 추가' 감지
+    if (target.id === 'selectEditTripCurrency') {
+      if (target.value === 'ADD_CUSTOM_CURRENCY') {
+        const currentTrip = getActiveTrip();
+        if (currentTrip) {
+          // 앞서 만들어둔 전 세계 통화 선택 핸들러 호출
+          await handleCurrencyDropdownChange(target, currentTrip, true);
+        }
+      }
+      return;
+    }
+
     if (target.classList.contains('join-member-chk')) {
       if (target.checked) {
         document.querySelectorAll('.join-member-chk').forEach((chk) => {

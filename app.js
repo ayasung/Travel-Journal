@@ -3241,12 +3241,6 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
 
     const headcount = members.length;
     
-    let members = rawMembers
-      .split(',')
-      .map((m) => m.trim())
-      .filter(Boolean);
-    if (members.length === 0) members.push('나');
-
     while (members.length < headcount) {
       members.push(`동행${members.length}`);
     }
@@ -3273,7 +3267,7 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       endDate,
       baseCurrency,      // 선택한 기본 통화 전달
       customCurrencies,  // 추가된 통화 목록 전달
-      maxMembers: members.length,
+      maxMembers: headcount,
       members,
       claimedMembers: { [members[0]]: deviceUid },
       ownerUid: deviceUid,

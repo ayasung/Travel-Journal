@@ -689,15 +689,20 @@ function updateHotelStayDurationBadge() {
 
 function updateExpenseModalRatePreview() {
   try {
-    const curr = ($('selectExpCurrency')?.value || 'KRW').toUpperCase();
+    const trip = getActiveTrip();
+    // [개선] 하드코딩된 KRW 대신 현재 여행의 기준 통화 또는 전역 통화 변수 참조
+    const baseCurr = trip?.baseCurrency || 'KRW'; 
+
+    const curr = ($('selectExpCurrency')?.value || baseCurr).toUpperCase();
     const amount = Number($('inputExpAmount')?.value) || 0;
     const rate = Number($('inputExpAppliedRate')?.value) || 0;
 
     if ($('expRateUnitPrefix')) $('expRateUnitPrefix').textContent = `1 ${curr} =`;
 
-    const convertedKrw = Math.round(amount * rate);
+    const convertedVal = Math.round(amount * rate);
     if ($('expConvertedKrwPreview')) {
-      $('expConvertedKrwPreview').textContent = `${convertedKrw.toLocaleString()} KRW`;
+      // 레이블도 '원화 환산' 대신 기준 통화 명칭에 맞추어 동적 표시
+      $('expConvertedKrwPreview').textContent = `${convertedVal.toLocaleString()} ${baseCurr}`;
     }
   } catch (err) {}
 }
@@ -1881,6 +1886,7 @@ function renderBookingDynamicFields(category, existingData = null) {
   }
 }
 
+
 async function openAddBookingModal() {
   const trip = getActiveTrip();
   if (!trip) return;
@@ -1897,10 +1903,11 @@ async function openAddBookingModal() {
   if ($('inputBookingCode')) $('inputBookingCode').value = '';
   if ($('inputBookingMemo')) $('inputBookingMemo').value = '';
   
-  // 통화 선택 세팅 (통화 추가 지원)
+  // [개선] 예약 폼 통화도 여행 설정 통화(trip.baseCurrency)를 기본으로 연동
+  const defaultTripCurrency = trip.baseCurrency || 'KRW';
   const currSelect = $('selectBookingCurrency');
   if (currSelect) {
-    populateCurrencySelect(currSelect, trip, 'JPY');
+    populateCurrencySelect(currSelect, trip, defaultTripCurrency);
   }
   if ($('inputBookingAmount')) $('inputBookingAmount').value = '';
   if ($('chkBookingAutoSync')) $('chkBookingAutoSync').checked = true;
@@ -1923,7 +1930,7 @@ async function openAddBookingModal() {
       )
       .join('');
   }
-
+  
   openModalSafe('modalAddBooking');
 }
 
@@ -1951,13 +1958,14 @@ async function openAddExpenseModal() {
 
   if ($('inputExpTitle')) $('inputExpTitle').value = '';
   
-  // 지출 통화 선택 세팅 (통화 추가 지원)
+  // [개선] 새 여행 만들 때 설정한 해당 여행의 대표 통화(trip.baseCurrency)로 기본 세팅 연동
+  const defaultTripCurrency = trip.baseCurrency || 'KRW';
   const currSelect = $('selectExpCurrency');
   if (currSelect) {
-    populateCurrencySelect(currSelect, trip, 'JPY');
+    populateCurrencySelect(currSelect, trip, defaultTripCurrency);
   }
   if ($('inputExpAmount')) $('inputExpAmount').value = '';
-
+  
   if ($('selectExpPayer')) {
     $('selectExpPayer').innerHTML = members
       .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)

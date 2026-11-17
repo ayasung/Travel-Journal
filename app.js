@@ -2810,11 +2810,52 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
+    // 지출 또는 예약, 개인 환전 통화 선택 폼에서 '통화 추가'를 골랐을 때의 처리
     if (target.id === 'selectExpCurrency' || target.id === 'selectBookingCurrency' || target.id === 'selectPrivateExchangeCurrency') {
-      if (target.value === 'ADD_CUSTOM_CURRENCY' && tripForSelect) {
-        const added = await handleCurrencyDropdownChange(target, tripForSelect);
-        if (added) {
-          await syncExpenseModalRateFromApi();
+      const currentTrip = getActiveTrip();
+      if (target.value === 'ADD_CUSTOM_CURRENCY' && currentTrip) {
+        const gridContainer = $('currencySelectorButtonsGrid');
+        if (gridContainer) {
+          gridContainer.innerHTML = GLOBAL_CURRENCY_OPTIONS.map((opt) => `
+            <button type="button" data-action="pick-custom-currency" data-code="${opt.code}" class="touch-target p-2.5 rounded-xl border border-slate-200 hover:border-sky-500 hover:bg-sky-50 text-left transition flex flex-col justify-center">
+              <span class="text-xs font-extrabold text-slate-800">${opt.code}</span>
+              <span class="text-[10px] text-slate-500 truncate">${opt.name.replace(/^[A-Z]+\s*\((.*?)\)$/, '$1')}</span>
+            </button>
+          `).join('');
+    
+          openModalSafe('modalCurrencySelector');
+    
+          const handlePickForForms = async (eClick) => {
+            const btn = eClick.target.closest('[data-action="pick-custom-currency"]');
+            if (!btn) return;
+            const chosenCode = btn.getAttribute('data-code');
+            gridContainer.removeEventListener('click', handlePickForForms);
+            closeModalSafe('modalCurrencySelector');
+    
+            if (chosenCode && chosenCode.length === 3) {
+              if (!currentTrip.customCurrencies) currentTrip.customCurrencies = [];
+              if (!currentTrip.customCurrencies.includes(chosenCode)) {
+                currentTrip.customCurrencies.push(chosenCode);
+                saveLocalData();
+                await syncTripToFirestore(currentTrip);
+              }
+              
+              // 최신 환율 API 자동 호출
+              try {
+                await fetchLiveExchangeRate(chosenCode);
+              } catch (err) {}
+    
+              // 해당 셀렉트박스 갱신 및 선택
+              populateCurrencySelect(target, currentTrip, chosenCode);
+              await syncExpenseModalRateFromApi();
+              alert(`'${chosenCode}' 통화가 추가되었습니다!`);
+            } else {
+              target.value = currentTrip.baseCurrency || 'KRW';
+            }
+          };
+    
+          gridContainer.onclick = null;
+          gridContainer.addEventListener('click', handlePickForForms);
         }
       } else {
         await syncExpenseModalRateFromApi();

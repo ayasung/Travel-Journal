@@ -1429,21 +1429,30 @@ function renderExpensesTab(trip) {
   const remainKrw = totalBudget - mySpentKrw;
   const remainPercent = totalBudget > 0 ? Math.max(0, Math.min(100, (remainKrw / totalBudget) * 100)) : 100;
 
+  // [개선] 하드코딩된 KRW 대신 여행 설정의 기본 통화(trip.baseCurrency)를 동적 반영
+  const baseCurr = trip.baseCurrency || 'KRW';
+
   if ($('myBudgetTotalText')) {
-    let budgetDisplay = `${Math.round(totalBudget).toLocaleString()} KRW`;
+    let budgetDisplay = `${Math.round(totalBudget).toLocaleString()} ${baseCurr}`;
     if (exchangeAmount > 0) {
       budgetDisplay += ` (환전: ${exchangeAmount.toLocaleString()} ${exchangeCurrency} / ${exchangeKrw.toLocaleString()}원)`;
     }
-    $('myBudgetTotalTextfiles') // safe fallback
     $('myBudgetTotalText').textContent = budgetDisplay;
   }
+
   if ($('myBudgetRemainText')) {
-    $('myBudgetRemainText').textContent = `${Math.round(remainKrw).toLocaleString()} KRW`;
+    $('myBudgetRemainText').textContent = `${Math.round(remainKrw).toLocaleString()} ${baseCurr}`;
     $('myBudgetRemainText').className =
       remainKrw < 0 ? 'text-base font-extrabold text-rose-600' : 'text-base font-extrabold text-sky-600';
   }
-  if ($('myBudgetSpentText')) $('myBudgetSpentText').textContent = `${Math.round(mySpentKrw).toLocaleString()} KRW`;
-  if ($('myBudgetRemainPercent')) $('myBudgetRemainPercent').textContent = `잔여 ${Math.round(remainPercent)}%`;
+  
+  if ($('myBudgetSpentText')) {
+    $('myBudgetSpentText').textContent = `${Math.round(mySpentKrw).toLocaleString()} ${baseCurr}`;
+  }
+  
+  if ($('myBudgetRemainPercent')) {
+    $('myBudgetRemainPercent').textContent = `잔여 ${Math.round(remainPercent)}%`;
+  }
 
   const gaugeBar = $('myBudgetGaugeBar');
   if (gaugeBar) {
@@ -3094,6 +3103,7 @@ function bindDynamicModalForms() {
       const destination = ($('inputEditTripDestination')?.value || '').trim() || trip.destination;
       const startDate = $('inputEditTripStartDate')?.value || trip.startDate;
       const endDate = $('inputEditTripEndDate')?.value || startDate;
+      const baseCurrency = ($('selectEditTripCurrency')?.value || trip.baseCurrency || 'KRW').toUpperCase();
       const headcount = Math.max(1, Number($('inputEditTripHeadcount')?.value) || 1);
       const rawMembers = $('inputEditTripMembers')?.value || '나';
 
@@ -3129,7 +3139,7 @@ function bindDynamicModalForms() {
       trip.destination = destination;
       trip.startDate = startDate;
       trip.endDate = endDate;
-      trip.baseCurrency = 'KRW';
+      trip.baseCurrency = baseCurrency;
       trip.maxMembers = newMembers.length;
       trip.members = newMembers;
       trip.claimedMembers = newClaimed;
@@ -3145,7 +3155,7 @@ function bindDynamicModalForms() {
       closeModalSafe('modalEditTripInfo');
       renderDetailView();
       await syncTripToFirestore(trip);
-      alert('여행 기본 정보 및 참여자 닉네임이 성공적으로 수정되었습니다!');
+      alert('여행 기본 정보 및 참여자 설정이 성공적으로 수정되었습니다!');
     } catch (err) {
       console.error('여행 기본 정보 수정 오류:', err);
     }
@@ -3526,13 +3536,35 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
   }
 });
 
+// ============================================================================
+// 개인 예산 설정 폼 열 때 통화 셀렉트박스 연동
+// ============================================================================
+function openBudgetUpdateForm(trip) {
+  const form = $('formUpdatePrivateBudget');
+  if (!trip || !form) return;
+  const priv = getMyPrivateInfo(trip);
+  
+  if ($('inputPrivateBudgetValue')) $('inputPrivateBudgetValue').value = String(priv.myBudget || 0);
+  if ($('inputPrivateExchangeAmount')) $('inputPrivateExchangeAmount').value = String(priv.exchangeAmount || '');
+  
+  const exCurrSel = $('selectPrivateExchangeCurrency');
+  if (exCurrSel) {
+    populateCurrencySelect(exCurrSel, trip, priv.exchangeCurrency || trip.baseCurrency || 'JPY');
+  }
+  form.classList.remove('hidden');
+}
+
+// ============================================================================
+// 개인 예산 설정 및 환전 환율 계산 반영 제출 핸들러
+// ============================================================================
 $('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
   e.preventDefault();
   const trip = getActiveTrip();
   if (!trip) return;
+
   const val = Number($('inputPrivateBudgetValue')?.value) || 0;
   const exchangeAmount = Number($('inputPrivateExchangeAmount')?.value) || 0;
-  const exchangeCurrency = $('selectPrivateExchangeCurrency')?.value || 'JPY';
+  const exchangeCurrency = $('selectPrivateExchangeCurrency')?.value || trip.baseCurrency || 'JPY';
   const exchangeKrw = Number($('inputPrivateExchangeKrw')?.value) || 0;
 
   let computedBudget = val;
@@ -3551,9 +3583,11 @@ $('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
     exchangeCurrency,
     exchangeKrw
   };
+
   saveLocalData();
   $('formUpdatePrivateBudget')?.classList.add('hidden');
   renderExpensesTab(trip);
+  alert('개인 예산 및 환전 내역이 성공적으로 반영되었습니다!');
 });
 
 $('formCreateExpense')?.addEventListener('submit', async (e) => {

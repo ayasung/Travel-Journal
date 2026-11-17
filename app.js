@@ -2756,14 +2756,6 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-    // 통화 선택 셀렉트박스 변경 감지 및 '통화 추가' 처리
-    const tripForSelect = getActiveTrip();
-    if (target.id === 'selectNewTripCurrency') {
-      if (target.value === 'ADD_CUSTOM_CURRENCY') {
-        await handleCurrencyDropdownChange(target, { customCurrencies: ['JPY', 'USD', 'EUR'] });
-      }
-      return;
-    }
     if (target.id === 'selectExpCurrency' || target.id === 'selectBookingCurrency' || target.id === 'selectPrivateExchangeCurrency') {
       if (target.value === 'ADD_CUSTOM_CURRENCY' && tripForSelect) {
         const added = await handleCurrencyDropdownChange(target, tripForSelect);

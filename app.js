@@ -2681,22 +2681,24 @@ document.body.addEventListener('click', async (e) => {
 });
 
 // --------------------------------------------------------------------------
-// [B] document.body 변경(change) 이벤트 위임 ('통화 추가' 감지 포함)
+// [B] document.body 변경(change) 이벤트 위임
 // --------------------------------------------------------------------------
 document.body.addEventListener('change', async (e) => {
   try {
     const target = e.target;
     if (!target) return;
 
-    // change 이벤트 리스너 내부 맨 처음에 추가해 주세요!
+    // tripForSelect 변수는 함수 내에서 딱 한 번만 선언합니다.
     const tripForSelect = getActiveTrip();
+
+    // 새 여행 만들기 통화 선택 및 '통화 추가' 감지
     if (target.id === 'selectNewTripCurrency') {
       if (target.value === 'ADD_CUSTOM_CURRENCY') {
         await handleCurrencyDropdownChange(target, { customCurrencies: ['JPY', 'USD', 'EUR'] });
       }
       return;
     }
-    
+
     if (target.classList.contains('join-member-chk')) {
       if (target.checked) {
         document.querySelectorAll('.join-member-chk').forEach((chk) => {
@@ -2720,17 +2722,20 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-    if (target.id === 'chkRentalDifferentDropoff') {
-      const dropoffWrapper = $('rentalDropoffLocationWrapper');
-      if (dropoffWrapper) {
-        dropoffWrapper.classList.toggle('hidden', !target.checked);
-      }
+    if (target.id === 'inputRentalPickDate' || target.id === 'inputRentalDropDate') {
+      updateRentalDurationBadge();
+      return;
+    }
+
+    if (target.id === 'chkRentalSameLocation') {
+      const isSame = target.checked;
+      $('rentalDropLocWrapper')?.classList.toggle('hidden', isSame);
       return;
     }
 
     if (target.getAttribute('data-action') === 'toggle-cl-item') {
       const id = target.getAttribute('data-id');
-      const trip = getActiveTrip();
+      const trip = tripForSelect;
       if (!trip) return;
       const targetArr = currentChecklistSubTab === 'shopping' ? trip.shoppingList : trip.packingList;
       const item = (targetArr || []).find((c) => c.id === id);
@@ -2745,13 +2750,13 @@ document.body.addEventListener('change', async (e) => {
 
     if (target.id === 'selectBookingCategory') {
       const cat = target.value;
-      const trip = getActiveTrip();
+      const trip = tripForSelect;
       renderBookingDynamicFields(cat, { date: trip?.startDate || '' });
       return;
     }
 
     if (target.id === 'selectPhotoDayFilter') {
-      const trip = getActiveTrip();
+      const trip = tripForSelect;
       if (trip) renderPhotosTab(trip);
       return;
     }
@@ -2780,7 +2785,7 @@ document.body.addEventListener('change', async (e) => {
 
     if (target.id === 'selectReviewFromBooking') {
       const bkId = target.value;
-      const trip = getActiveTrip();
+      const trip = tripForSelect;
       if (!trip || !bkId) return;
       const bk = (trip.bookings || []).find((b) => b.id === bkId);
       if (!bk) return;

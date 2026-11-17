@@ -249,27 +249,6 @@ function setupDynamicDomEnhancements() {
     joinCodeInput.placeholder = '초대 코드 입력 (예: TR-XXXX)';
   }
 
-  // 새 여행 만들기 모달에 환전 예산 필드 동적 추가
-  const budgetInput = $('inputNewTripMyBudget');
-  if (budgetInput && !$('inputNewTripExchangeAmount')) {
-    const wrapper = budgetInput.parentElement;
-    if (wrapper) {
-      const exchangeDiv = document.createElement('div');
-      exchangeDiv.className = 'grid grid-cols-2 gap-2 mt-2';
-      exchangeDiv.innerHTML = `
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">환전 외화 금액 (선택)</label>
-          <input id="inputNewTripExchangeAmount" type="number" min="0" step="any" placeholder="예: 50000 (엔/달러)" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
-        </div>
-        <div>
-          <label class="text-xs font-semibold text-slate-600 block mb-1">실제 지불 원화 (환전비용)</label>
-          <input id="inputNewTripExchangeKrw" type="number" min="0" step="1000" placeholder="예: 460000" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500" />
-        </div>
-      `;
-      wrapper.parentNode.appendChild(exchangeDiv);
-    }
-  }
-
   if (!$('modalSelectJoinMember')) {
     const modalsHtml = `
       <div id="modalSelectJoinMember" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -1684,6 +1663,7 @@ async function openNewTripModal() {
   if ($('inputNewTripStartDate')) $('inputNewTripStartDate').value = today;
   if ($('inputNewTripEndDate')) $('inputNewTripEndDate').value = today;
   
+  // 기본 통화 셀렉트박스 세팅 (KRW 기본, 통화 추가 포함)
   const newTripCurrencySelect = $('selectNewTripCurrency');
   if (newTripCurrencySelect) {
     populateCurrencySelect(newTripCurrencySelect, { customCurrencies: ['JPY', 'USD', 'EUR'] }, 'KRW');
@@ -2708,6 +2688,15 @@ document.body.addEventListener('change', async (e) => {
     const target = e.target;
     if (!target) return;
 
+    // change 이벤트 리스너 내부 맨 처음에 추가해 주세요!
+    const tripForSelect = getActiveTrip();
+    if (target.id === 'selectNewTripCurrency') {
+      if (target.value === 'ADD_CUSTOM_CURRENCY') {
+        await handleCurrencyDropdownChange(target, { customCurrencies: ['JPY', 'USD', 'EUR'] });
+      }
+      return;
+    }
+    
     if (target.classList.contains('join-member-chk')) {
       if (target.checked) {
         document.querySelectorAll('.join-member-chk').forEach((chk) => {

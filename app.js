@@ -3588,11 +3588,17 @@ $('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
   const val = Number($('inputPrivateBudgetValue')?.value) || 0;
   const exchangeAmount = Number($('inputPrivateExchangeAmount')?.value) || 0;
   const exchangeCurrency = $('selectPrivateExchangeCurrency')?.value || trip.baseCurrency || 'JPY';
-  const exchangeKrw = Number($('inputPrivateExchangeKrw')?.value) || 0;
+  
+  // 사용자가 지불 금액을 입력하지 않았다면 환율 정보를 가져와 자동 계산
+  let exchangeKrw = Number($('inputPrivateExchangeKrw')?.value) || 0;
+  if (exchangeKrw <= 0 && exchangeAmount > 0) {
+    const rate = getCachedRateToKrw(exchangeCurrency);
+    exchangeKrw = Math.round(exchangeAmount * rate);
+  }
 
   const prev = getMyPrivateInfo(trip);
   privateBudgets[trip.id] = { 
-    myBudget: val, 
+    myBudget: val, // 순수 기본 예산만 반영
     myNickname: prev.myNickname,
     exchangeAmount,
     exchangeCurrency,

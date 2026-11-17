@@ -3234,9 +3234,13 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const baseCurrency = ($('selectNewTripCurrency')?.value || 'KRW').toUpperCase();
     const myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
 
-    const headcount = Math.max(1, Number($('inputNewTripHeadcount')?.value) || 1);
+    // [수정] 존재하지 않는 인원수 입력창 대신, 쉼표로 입력된 닉네임 목록 개수를 인원수로 설정
     const rawMembers = $('inputNewTripMembers')?.value || '나';
+    let members = rawMembers.split(',').map((m) => m.trim()).filter(Boolean);
+    if (members.length === 0) members.push('나');
 
+    const headcount = members.length;
+    
     let members = rawMembers
       .split(',')
       .map((m) => m.trim())
@@ -3256,6 +3260,11 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       customCurrencies.push(baseCurrency);
     }
 
+    // 여행 생성 시점 실시간 환율 자동 갱신
+    try {
+      await fetchLiveExchangeRate(baseCurrency);
+    } catch (err) {}
+    
     const newTrip = normalizeTrip({
       id: 'trip_' + Date.now(),
       title,
@@ -3272,8 +3281,14 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     });
 
     trips.unshift(newTrip);
-    privateBudgets[newTrip.id] = { myBudget, myNickname: members[0] };
-    saveLocalData();
+    privateBudgets[newTrip.id] = {
+      myBudget: myBudget > 0 ? myBudget : 1500000,
+      myNickname: members[0],
+      exchangeAmount,
+      exchangeCurrency: baseCurrency,
+      exchangeKrw
+    };
+    saveLocalData()
 
     closeModalSafe('modalNewTrip');
     enterTripDetail(newTrip.id);

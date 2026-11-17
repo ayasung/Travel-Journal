@@ -2691,10 +2691,51 @@ document.body.addEventListener('change', async (e) => {
     // tripForSelect 변수는 함수 내에서 딱 한 번만 선언합니다.
     const tripForSelect = getActiveTrip();
 
-    // 새 여행 만들기 통화 선택 및 '통화 추가' 감지
+    // 새 여행 만들기 통화 선택 및 '통화 추가' 버튼 메뉴 모달 연동
     if (target.id === 'selectNewTripCurrency') {
       if (target.value === 'ADD_CUSTOM_CURRENCY') {
-        await handleCurrencyDropdownChange(target, { customCurrencies: ['JPY', 'USD', 'EUR'] });
+        const gridContainer = $('currencySelectorButtonsGrid');
+        if (gridContainer) {
+          gridContainer.innerHTML = GLOBAL_CURRENCY_OPTIONS.map((opt) => `
+            <button type="button" data-action="pick-custom-currency" data-code="${opt.code}" class="touch-target p-2.5 rounded-xl border border-slate-200 hover:border-sky-500 hover:bg-sky-50 text-left transition flex flex-col justify-center">
+              <span class="text-xs font-extrabold text-slate-800">${opt.code}</span>
+              <span class="text-[10px] text-slate-500 truncate">${opt.name.replace(/^[A-Z]+\s*\((.*?)\)$/, '$1')}</span>
+            </button>
+          `).join('');
+
+          openModalSafe('modalCurrencySelector');
+
+          // 클릭 시 선택한 통화로 드롭다운 값 변경 및 실시간 환율 조회
+          const handlePickCurrency = async (eClick) => {
+            const btn = eClick.target.closest('[data-action="pick-custom-currency"]');
+            if (!btn) return;
+            const chosenCode = btn.getAttribute('data-code');
+            gridContainer.removeEventListener('click', handlePickCurrency);
+            closeModalSafe('modalCurrencySelector');
+
+            if (chosenCode && chosenCode.length === 3) {
+              let opt = Array.from(target.options).find(o => o.value === chosenCode);
+              if (!opt) {
+                opt = document.createElement('option');
+                opt.value = chosenCode;
+                const found = GLOBAL_CURRENCY_OPTIONS.find(o => o.code === chosenCode);
+                opt.textContent = found ? found.name : `${chosenCode} (기타 통화)`;
+                target.insertBefore(opt, target.lastElementChild);
+              }
+              target.value = chosenCode;
+              try { await fetchLiveExchangeRate(chosenCode); } catch (e) {}
+              alert(`'${chosenCode}' 통화가 기본 통화로 선택되었습니다.`);
+            } else {
+              target.value = 'KRW';
+            }
+          };
+
+          gridContainer.onclick = null;
+          gridContainer.addEventListener('click', handlePickCurrency);
+        } else {
+          alert('통화 선택 팝업창 요소를 찾을 수 없습니다. index.html의 모달 구조를 확인해주세요.');
+          target.value = 'KRW';
+        }
       }
       return;
     }

@@ -399,10 +399,6 @@ function setupDynamicDomEnhancements() {
                 <label class="text-xs font-semibold text-slate-600 block mb-1">총 참여 인원수(명)</label>
                 <input id="inputEditTripHeadcount" type="number" min="1" max="30" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-extrabold outline-none focus:border-sky-500" required />
               </div>
-              <div>
-                <label class="text-xs font-semibold text-slate-600 block mb-1">총 참여 인원수(명)</label>
-                <input id="inputEditTripHeadcount" type="number" min="1" max="30" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-extrabold outline-none focus:border-sky-500" required />
-              </div>
             </div>
             <div>
               <label class="text-xs font-semibold text-slate-600 block mb-1">참여자 닉네임 목록 (쉼표 구분)</label>

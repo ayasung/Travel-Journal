@@ -2485,17 +2485,26 @@ document.body.addEventListener('click', async (e) => {
         if (tripId) enterTripDetail(tripId);
         break;
 
-      case 'delete-trip': {
+        case 'delete-trip': {
         e.stopPropagation();
-        const target = trips.find((t) => t.id === tripId);
-        if (target && confirm(`'${target.title}' 여행을 삭제하시겠습니까?`)) {
+        const targetTrip = trips.find((t) => t.id === tripId);
+        if (targetTrip && confirm(`'${targetTrip.title}' 여행을 삭제하시겠습니까?`)) {
+          // 1. 로컬 배열(trips)에서 즉시 제거
           trips = trips.filter((t) => t.id !== tripId);
           delete privateBudgets[tripId];
+          
+          // 2. 로컬 스토리지 즉시 반영
           saveLocalData();
-          if (isCloudOnline && db) {
-            deleteDoc(doc(db, 'trips', tripId)).catch((err) => console.warn(err));
-          }
+          
+          // 3. UI 즉시 갱신 (오류가 나더라도 화면에서 바로 사라지도록 선행 처리)
           renderHomeView();
+          
+          // 4. 파이어베이스 클라우드 Firestore 문서 안전 삭제 (deleteDoc) 및 예외 처리
+          if (isCloudOnline && db) {
+            deleteDoc(doc(db, 'trips', tripId)).catch((err) => {
+              console.warn('파이어베이스 여행 문서 삭제 중 경고:', err);
+            });
+          }
         }
         break;
       }

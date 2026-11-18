@@ -373,64 +373,6 @@ function setupDynamicDomEnhancements() {
           </form>
         </div>
       </div>
-
-      <div id="modalEditTripInfo" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-        <div class="bg-white w-full max-w-sm rounded-2xl p-5 border border-slate-200 shadow-xl space-y-3 max-h-[90vh] overflow-y-auto">
-          <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
-            <div>
-              <h3 class="text-sm font-extrabold text-slate-800">⚙️ 여행 기본 정보 및 인원 수정</h3>
-              <p class="text-[11px] text-slate-500">생성자(방장) 전용 설정입니다.</p>
-            </div>
-            <button type="button" data-close-modal="modalEditTripInfo" class="touch-target text-slate-400 hover:text-slate-600">
-              <i class="fa-solid fa-xmark"></i>
-            </button>
-          </div>
-          <form id="formEditTripInfo" class="space-y-3">
-            <div>
-              <label class="text-xs font-semibold text-slate-600 block mb-1">여행 제목</label>
-              <input id="inputEditTripTitle" type="text" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-            </div>
-            <div>
-              <label class="text-xs font-semibold text-slate-600 block mb-1">여행지 (도시 / 국가)</label>
-              <input id="inputEditTripDestination" type="text" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-            </div>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-xs font-semibold text-slate-600 block mb-1">시작일</label>
-                <input id="inputEditTripStartDate" type="date" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-              </div>
-              <div>
-                <label class="text-xs font-semibold text-slate-600 block mb-1">종료일</label>
-                <input id="inputEditTripEndDate" type="date" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-2">
-              <div>
-                <label class="text-xs font-semibold text-slate-600 block mb-1">기본 통화</label>
-                <select id="selectEditTripCurrency" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-bold outline-none focus:border-sky-500">
-                  <option value="KRW">KRW (한국 원)</option>
-                  <option value="JPY">JPY (일본 엔)</option>
-                  <option value="USD">USD (미국 달러)</option>
-                  <option value="EUR">EUR (유로)</option>
-                  <option value="ADD_CUSTOM_CURRENCY" class="font-extrabold text-sky-600">➕ 통화 추가...</option>
-                </select>
-              </div>
-              <div>
-                <label class="text-xs font-semibold text-slate-600 block mb-1">총 참여 인원수(명)</label>
-                <input id="inputEditTripHeadcount" type="number" min="1" max="30" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-extrabold outline-none focus:border-sky-500" required />
-              </div>
-            </div>
-            <div>
-              <label class="text-xs font-semibold text-slate-600 block mb-1">참여자 닉네임 목록 (쉼표 구분)</label>
-              <input id="inputEditTripMembers" type="text" placeholder="예: 나, 동행1, 동행2" class="touch-target w-full bg-slate-50 border border-slate-200 rounded-xl px-3 text-xs font-medium outline-none focus:border-sky-500" required />
-            </div>
-            <div class="pt-2 flex justify-end gap-2">
-              <button type="button" data-close-modal="modalEditTripInfo" class="touch-target px-4 rounded-xl text-xs font-semibold text-slate-600 bg-slate-100">취소</button>
-              <button type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white bg-sky-600 hover:bg-sky-700">수정 내용 저장</button>
-            </div>
-          </form>
-        </div>
-      </div>
     `;
     document.body.insertAdjacentHTML('beforeend', modalsHtml);
   }

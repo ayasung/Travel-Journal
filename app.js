@@ -305,6 +305,23 @@ async function handleCurrencyDropdownChange(selectElement, trip, isFromNewTrip =
 }
 
 // ============================================================================
+// [추가] 해당 여행의 모든 통화(기준 통화 + 커스텀 통화) 환율을 일괄 갱신하는 공통 함수
+// ============================================================================
+async function refreshTripCurrencies(trip) {
+  if (!trip) return;
+  const currencies = Array.from(new Set([trip.baseCurrency, ...(trip.customCurrencies || ['JPY', 'USD', 'EUR'])].filter(Boolean)));
+  for (const curr of currencies) {
+    try {
+      if (typeof fetchLiveExchangeRate === 'function') {
+        await fetchLiveExchangeRate(curr);
+      }
+    } catch (e) {
+      console.warn(`통화 ${curr} 환율 갱신 실패:`, e);
+    }
+  }
+}
+
+// ============================================================================
 // 4. UI 동적 보정 및 환전 예산/통화 확장 필드 주입
 // ============================================================================
 function setupDynamicDomEnhancements() {
@@ -798,19 +815,32 @@ async function syncExpenseModalRateFromApi() {
     if (curr === 'KRW') {
       if (rateInput) rateInput.value = '1';
       if (statusText) statusText.textContent = '적용 환율 (1 KRW = 1 KRW)';
-      updateExpenseModalRatePreview();
+      if (typeof updateExpenseModalRatePreview === 'function') updateExpenseModalRatePreview();
       return;
     }
 
     if (statusText) statusText.textContent = `${curr} 기준 환율 확인 중...`;
-    const rateVal = getCachedRateToKrw(curr);
+    
+    // [항목 3 반영] 실시간 환율 정보를 안전하게 가져와 적용
+    let rateVal = 1;
+    if (typeof fetchLiveExchangeRate === 'function') {
+      const res = await fetchLiveExchangeRate(curr);
+      rateVal = res?.rate || getCachedRateToKrw(curr);
+    } else {
+      rateVal = getCachedRateToKrw(curr);
+    }
 
     if (rateInput) rateInput.value = rateVal.toFixed(2);
     if (statusText) {
       statusText.textContent = `기준 환율 적용완료 (1 ${curr} = ${rateVal.toFixed(2)} KRW)`;
     }
-    updateExpenseModalRatePreview();
-  } catch (err) {}
+    
+    if (typeof updateExpenseModalRatePreview === 'function') {
+      updateExpenseModalRatePreview();
+    }
+  } catch (err) {
+    console.warn('환율 자동 동기화 경고:', err);
+  }
 }
 
 // ============================================================================
@@ -3271,16 +3301,21 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     trips.unshift(newTrip);
     privateBudgets[newTrip.id] = {
       myBudget: myBudget > 0 ? myBudget : 1500000,
-      myNickname: members[0]
+      myNickname: members[0],
+      exchangeAmount,
+      exchangeCurrency: baseCurrency,
+      exchangeKrw
     };
     saveLocalData();
 
+    // 생성 직후 해당 여행의 모든 통화 환율 즉시 갱신
+    await refreshTripCurrencies(newTrip);
+
     closeModalSafe('modalNewTrip');
-    if (typeof enterTripDetail === 'function') {
-      enterTripDetail(newTrip.id);
-    }
+    enterTripDetail(newTrip.id);
+    await syncTripToFirestore(newTrip);
   } catch (err) {
-    console.error('새 여행 생성 오류:', err);
+    console.error('여행 생성 오류:', err);
   }
 });
 

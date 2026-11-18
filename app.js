@@ -103,6 +103,8 @@ let pendingJoinTrip = null;
 let leafletMap = null;
 let leafletLayerGroup = null;
 
+let deletedTripIds = new Set(); // 로컬에서 삭제된 여행 ID를 임시 기록
+
 // ============================================================================
 // 2. 방어형 DOM 헬퍼 및 유틸리티
 // ============================================================================
@@ -657,6 +659,9 @@ function startRealtimeListeners() {
       (snapshot) => {
         const cloudTrips = [];
         snapshot.forEach((docSnap) => {
+          // [핵심 필터 추가] 로컬에서 삭제한 적이 있는 여행 ID라면 스냅샷에서 제외
+          if (deletedTripIds.has(docSnap.id)) return;
+          
           const norm = normalizeTrip({ id: docSnap.id, ...docSnap.data() });
           if (norm) cloudTrips.push(norm);
         });
@@ -2487,23 +2492,20 @@ document.body.addEventListener('click', async (e) => {
 
         case 'delete-trip': {
         e.stopPropagation();
-        const targetTrip = trips.find((t) => t.id === tripId);
-        if (targetTrip && confirm(`'${targetTrip.title}' 여행을 삭제하시겠습니까?`)) {
-          // 1. 로컬 배열(trips)에서 즉시 제거
+        const target = trips.find((t) => t.id === tripId);
+        if (target && confirm(`'${target.title}' 여행을 삭제하시겠습니까?`)) {
+          // 1. 삭제된 ID 기록
+          deletedTripIds.add(tripId);
+      
+          // 2. 로컬 배열 및 스토리지에서 제거
           trips = trips.filter((t) => t.id !== tripId);
           delete privateBudgets[tripId];
-          
-          // 2. 로컬 스토리지 즉시 반영
           saveLocalData();
-          
-          // 3. UI 즉시 갱신 (오류가 나더라도 화면에서 바로 사라지도록 선행 처리)
           renderHomeView();
-          
-          // 4. 파이어베이스 클라우드 Firestore 문서 안전 삭제 (deleteDoc) 및 예외 처리
+      
+          // 3. 파이어베이스 문서 삭제
           if (isCloudOnline && db) {
-            deleteDoc(doc(db, 'trips', tripId)).catch((err) => {
-              console.warn('파이어베이스 여행 문서 삭제 중 경고:', err);
-            });
+            deleteDoc(doc(db, 'trips', tripId)).catch((err) => console.warn(err));
           }
         }
         break;

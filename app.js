@@ -3616,7 +3616,8 @@ function openBudgetUpdateForm(trip) {
 // ============================================================================
 // 개인 예산 설정 및 환전 환율 계산 반영 제출 핸들러
 // ============================================================================
-$('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
+// 개인 예산 설정 및 환전 환율 계산 반영 제출 핸들러 (최신 환율 자동 갱신 및 통화 자동 등록)
+$('formUpdatePrivateBudget')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const trip = getActiveTrip();
   if (!trip) return;
@@ -3624,17 +3625,37 @@ $('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
   const val = Number($('inputPrivateBudgetValue')?.value) || 0;
   const exchangeAmount = Number($('inputPrivateExchangeAmount')?.value) || 0;
   const exchangeCurrency = $('selectPrivateExchangeCurrency')?.value || trip.baseCurrency || 'JPY';
-  
-  // 사용자가 지불 금액을 입력하지 않았다면 환율 정보를 가져와 자동 계산
   let exchangeKrw = Number($('inputPrivateExchangeKrw')?.value) || 0;
-  if (exchangeKrw <= 0 && exchangeAmount > 0) {
-    const rate = getCachedRateToKrw(exchangeCurrency);
-    exchangeKrw = Math.round(exchangeAmount * rate);
+
+  // [핵심 1] 이전에 선택한 적이 없던 새로운 통화라면 여행의 커스텀 통화 목록에 자동 추가
+  if (exchangeCurrency && exchangeCurrency !== 'KRW') {
+    if (!trip.customCurrencies) trip.customCurrencies = [];
+    if (!trip.customCurrencies.includes(exchangeCurrency)) {
+      trip.customCurrencies.push(exchangeCurrency);
+    }
+  }
+
+  // [핵심 2] 환전 금액은 입력되었으나 실제 지불 금액이 공란(0 이하)인 경우, 현 시점 최신 실시간 환율을 강제로 갱신하여 계산
+  if (exchangeAmount > 0 && exchangeKrw <= 0) {
+    try {
+      let rate = 1;
+      if (typeof fetchLiveExchangeRate === 'function') {
+        const rateData = await fetchLiveExchangeRate(exchangeCurrency);
+        rate = rateData?.rate || getCachedRateToKrw(exchangeCurrency) || 1;
+      } else {
+        rate = getCachedRateToKrw(exchangeCurrency) || 1;
+      }
+      exchangeKrw = Math.round(exchangeAmount * rate);
+    } catch (err) {
+      console.error('실시간 환율 자동 갱신 실패:', err);
+      const fallbackRate = getCachedRateToKrw(exchangeCurrency) || 1;
+      exchangeKrw = Math.round(exchangeAmount * fallbackRate);
+    }
   }
 
   const prev = getMyPrivateInfo(trip);
   privateBudgets[trip.id] = { 
-    myBudget: val, // 순수 기본 예산만 반영
+    myBudget: val, // 순수 기본 예산만 총 예산으로 유지
     myNickname: prev.myNickname,
     exchangeAmount,
     exchangeCurrency,
@@ -3642,9 +3663,13 @@ $('formUpdatePrivateBudget')?.addEventListener('submit', (e) => {
   };
 
   saveLocalData();
+  if (typeof syncTripToFirestore === 'function') {
+    await syncTripToFirestore(trip);
+  }
+
   $('formUpdatePrivateBudget')?.classList.add('hidden');
   renderExpensesTab(trip);
-  alert('개인 예산 및 환전 내역이 성공적으로 반영되었습니다!');
+  alert('개인 예산 및 최신 환율이 반영된 환전 내역이 성공적으로 저장되었습니다!');
 });
 
 $('formCreateExpense')?.addEventListener('submit', async (e) => {

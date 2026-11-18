@@ -1103,9 +1103,8 @@ function renderDetailView() {
       editBtn.id = 'btnOpenEditTripInfoModal';
       editBtn.type = 'button';
       editBtn.setAttribute('data-action', 'open-edit-trip-modal');
-      editBtn.className =
-        'mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg kinfolk-badge text-[11px] font-extrabold transition';
-      editBtn.innerHTML = '<i class="fa-solid fa-gear text-sky-600 pointer-events-none"></i><span class="pointer-events-none">여행 기본 정보 · 인원 수정</span>';
+      editBtn.className = 'mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg kinfolk-badge text-[11px] font-extrabold transition';
+      editBtn.innerHTML = '<i class="fa-solid fa-gear text-[var(--kinfolk-primary)] pointer-events-none"></i><span class="pointer-events-none">여행 기본 정보 · 인원 수정</span>';
       titleEl.parentElement.appendChild(editBtn);
     }
     editBtn.classList.toggle('hidden', !isCreator);
@@ -1305,8 +1304,8 @@ function renderRouteMapAndLinks(trip, dayItems) {
         const singleLinksHtml = localStops
           .map(
             (s, idx) => `
-            <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.cleanPlace)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-[11px] bg-slate-50 hover:bg-sky-50 text-slate-700 hover:text-sky-700 border border-slate-200 px-2.5 py-1 rounded-lg font-semibold transition">
-              <span class="text-sky-600 font-extrabold">${idx + 1}.</span> ${escapeHtml(s.cleanPlace)}
+            <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.cleanPlace)}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-[11px] bg-[var(--kinfolk-subtle)] hover:bg-[var(--kinfolk-border)] text-[var(--kinfolk-text-main)] border border-[var(--kinfolk-border)] px-2.5 py-1 rounded-lg font-semibold transition">
+              <span class="text-[var(--kinfolk-primary)] font-extrabold">${idx + 1}.</span> ${escapeHtml(s.cleanPlace)}
             </a>
           `
           )
@@ -1316,7 +1315,7 @@ function renderRouteMapAndLinks(trip, dayItems) {
           <div class="flex flex-wrap gap-1.5 pb-1">${singleLinksHtml}</div>
           ${
             localStops.length >= 2
-              ? `<a href="${multiUrl}" target="_blank" rel="noopener noreferrer" class="block w-full text-center py-2 rounded-xl bg-sky-50 hover:bg-sky-100 border border-sky-200 text-sky-700 text-xs font-extrabold transition">
+              ? `<a href="${multiUrl}" target="_blank" rel="noopener noreferrer" class="block w-full text-center py-2 rounded-xl bg-[var(--kinfolk-subtle)] hover:bg-[var(--kinfolk-border)] border border-[var(--kinfolk-border)] text-[var(--kinfolk-text-main)] text-xs font-extrabold transition">
                   🗺️ Day ${currentItineraryDay} 전체 경로 길찾기 (${escapeHtml(localStops[0].cleanPlace)} ➔ ${escapeHtml(localStops[localStops.length - 1].cleanPlace)})
                 </a>`
               : ''

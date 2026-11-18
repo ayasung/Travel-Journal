@@ -1542,46 +1542,76 @@ function renderExpensesTab(trip) {
     return;
   }
 
-  listEl.innerHTML = [...expenses]
-    .reverse()
-    .map((exp) => {
-      const amt = Number(exp.amount) || 0;
-      const curr = (exp.currency || 'KRW').toUpperCase();
-      const rate = Number(exp.rateToKrw) || 1;
-      const krwVal = Math.round(amt * rate);
-      const participants = Array.isArray(exp.participants) ? exp.participants : [exp.payer];
-      const isPersonal = participants.length === 1;
+listEl.innerHTML = [...expenses]
+  .reverse()
+  .map((exp) => {
+    const amt = Number(exp.amount) || 0;
+    const curr = (exp.currency || 'KRW').toUpperCase();
+    const rate = Number(exp.rateToKrw) || 1;
+    const krwVal = Math.round(amt * rate);
+    const participants = Array.isArray(exp.participants) ? exp.participants : [exp.payer];
+    const isPersonal = participants.length === 1;
+
+    // [추가] 참여자별 정산 확인 체크박스 HTML 생성
+    const settledList = Array.isArray(exp.settledMembers) ? exp.settledMembers : [exp.payer];
+    const participantCheckboxesHtml = members.map((m) => {
+      // 분담에 포함되지 않은 멤버는 건너뛰거나 비활성화 처리할 수 있습니다. (여기서는 전체 members 기준 또는 participants 기준 선택 가능)
+      if (!participants.includes(m)) return '';
+      const isPayer = (m === exp.payer);
+      const isChecked = isPayer || settledList.includes(m);
 
       return `
-        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
-          <div class="flex items-start justify-between gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${isPersonal ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}">
-                  ${isPersonal ? '개인 지출' : `1/${participants.length} 분담`}
-                </span>
-                ${exp.bookingId ? '<span class="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">예약연동</span>' : ''}
-                <h4 class="text-xs font-extrabold text-slate-800 truncate">${escapeHtml(exp.title)}</h4>
-              </div>
-              <p class="text-[11px] text-slate-500 mt-1">
-                결제: <strong class="text-slate-700">${escapeHtml(exp.payer)}</strong> · 참여: ${escapeHtml(participants.join(', '))}
-              </p>
-              ${curr !== 'KRW' ? `<p class="text-[10px] text-slate-400 mt-0.5">적용 환율 1 ${curr} = ${rate.toFixed(2)} KRW (원화 ${krwVal.toLocaleString()}원)</p>` : ''}
+        <label class="inline-flex items-center gap-1 text-[11px] bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-lg ${isPayer ? 'opacity-90 cursor-default' : 'cursor-pointer hover:bg-sky-50'}">
+          <input 
+            type="checkbox" 
+            data-action="toggle-expense-settlement" 
+            data-expense-id="${escapeHtml(exp.id)}" 
+            data-member="${escapeHtml(m)}"
+            ${isChecked ? 'checked' : ''} 
+            ${isPayer ? 'disabled' : ''}
+            class="w-3.5 h-3.5 rounded border-slate-300 text-sky-600 focus:ring-sky-500" 
+          />
+          <span class="font-bold text-slate-700">${escapeHtml(m)}</span>
+        </label>
+      `;
+    }).join('');
+
+    return `
+      <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${isPersonal ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}">
+                ${isPersonal ? '개인 지출' : `1/${participants.length} 분담`}
+              </span>
+              ${exp.bookingId ? '<span class="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">예약연동</span>' : ''}
+              <h4 class="text-xs font-extrabold text-slate-800 truncate">${escapeHtml(exp.title)}</h4>
             </div>
-            <div class="flex items-center gap-0.5 shrink-0">
-              <span class="text-xs font-extrabold text-slate-800 mr-1">${amt.toLocaleString()} ${curr}</span>
-              <button type="button" data-action="edit-expense" data-id="${escapeHtml(exp.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="지출 수정">
-                <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
-              </button>
-              <button type="button" data-action="delete-expense" data-id="${escapeHtml(exp.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="지출 삭제">
-                <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
-              </button>
-            </div>
+            <p class="text-[11px] text-slate-500 mt-1">
+              결제자: <strong class="text-slate-700">${escapeHtml(exp.payer)}</strong>
+            </p>
+            ${curr !== 'KRW' ? `<p class="text-[10px] text-slate-400 mt-0.5">적용 환율 1 ${curr} = ${rate.toFixed(2)} KRW (원화 ${krwVal.toLocaleString()}원)</p>` : ''}
+          </div>
+          <div class="flex items-center gap-0.5 shrink-0">
+            <span class="text-xs font-extrabold text-slate-800 mr-1">${amt.toLocaleString()} ${curr}</span>
+            <button type="button" data-action="edit-expense" data-id="${escapeHtml(exp.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="지출 수정">
+              <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
+            </button>
+            <button type="button" data-action="delete-expense" data-id="${escapeHtml(exp.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="지출 삭제">
+              <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
+            </button>
           </div>
         </div>
-      `;
-    })
-    .join('');
+
+        <!-- [추가된 정산 참여자 체크박스 영역] 장황한 텍스트 없이 직관적인 버튼/체크박스로만 구성 -->
+        <div class="flex items-center gap-1.5 flex-wrap pt-1.5 border-t border-slate-100">
+          <span class="text-[11px] font-bold text-slate-400 mr-1">정산 확인:</span>
+          ${participantCheckboxesHtml}
+        </div>
+      </div>
+    `;
+  })
+  .join('');
 }
 
 function renderPhotosTab(trip) {

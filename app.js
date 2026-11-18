@@ -900,26 +900,26 @@ function renderHomeView() {
           .join('');
 
         return `
-          <div data-action="open-trip" data-trip-id="${escapeHtml(trip.id)}" class="bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs hover:border-sky-300 active:scale-[0.99] transition cursor-pointer space-y-2.5">
+          <div data-action="open-trip" data-trip-id="${escapeHtml(trip.id)}" class="kinfolk-card rounded-2xl p-4 shadow-xs hover:border-[var(--kinfolk-primary)] active:scale-[0.99] transition cursor-pointer space-y-2.5">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-1.5 mb-1">
-                  <span class="text-[10px] font-mono font-bold text-sky-700 bg-sky-50 border border-sky-100 px-2 py-0.5 rounded">${escapeHtml(trip.inviteCode)}</span>
-                  <span class="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded">${escapeHtml(trip.destination)}</span>
+                  <span class="text-[10px] font-mono font-bold text-[var(--kinfolk-primary)] bg-[var(--kinfolk-subtle)] border border-[var(--kinfolk-border)] px-2 py-0.5 rounded">${escapeHtml(trip.inviteCode)}</span>
+                  <span class="text-[10px] font-bold text-[var(--kinfolk-text-sub)] bg-[var(--kinfolk-subtle)] px-2 py-0.5 rounded">${escapeHtml(trip.destination)}</span>
                 </div>
-                <h4 class="text-sm font-extrabold text-slate-800 truncate">${escapeHtml(trip.title)}</h4>
-                <p class="text-xs text-slate-500 mt-0.5">${escapeHtml(trip.startDate)} ~ ${escapeHtml(trip.endDate)}</p>
+                <h4 class="text-sm font-extrabold text-[var(--kinfolk-text-main)] truncate">${escapeHtml(trip.title)}</h4>
+                <p class="text-xs text-[var(--kinfolk-text-sub)] mt-0.5">${escapeHtml(trip.startDate)} ~ ${escapeHtml(trip.endDate)}</p>
               </div>
               <button type="button" data-action="delete-trip" data-trip-id="${escapeHtml(trip.id)}" class="touch-target flex items-center justify-center rounded-xl text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition shrink-0" title="여행 삭제">
                 <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
               </button>
             </div>
-            <div class="flex items-center justify-between pt-2 border-t border-slate-100">
+            <div class="flex items-center justify-between pt-2 border-t border-[var(--kinfolk-border)]">
               <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-[11px] text-slate-500 font-bold mr-1"><i class="fa-solid fa-users text-[10px] text-sky-600 mr-1"></i>정원 ${members.length}명</span>
+                <span class="text-[11px] text-[var(--kinfolk-text-sub)] font-bold mr-1"><i class="fa-solid fa-users text-[10px] text-[var(--kinfolk-primary)] mr-1"></i>정원 ${members.length}명</span>
                 ${memberTags}
               </div>
-              <span class="text-xs font-extrabold text-sky-600 shrink-0">입장 <i class="fa-solid fa-chevron-right text-[10px]"></i></span>
+              <span class="text-xs font-extrabold text-[var(--kinfolk-primary)] shrink-0">입장 <i class="fa-solid fa-chevron-right text-[10px]"></i></span>
             </div>
           </div>
         `;

@@ -1098,16 +1098,17 @@ function renderDetailView() {
   const titleEl = $('detailTripTitle');
   if (titleEl && titleEl.parentElement) {
     let editBtn = $('btnOpenEditTripInfoModal');
-    if (!editBtn) {
-      editBtn = document.createElement('button');
-      editBtn.id = 'btnOpenEditTripInfoModal';
-      editBtn.type = 'button';
-      editBtn.setAttribute('data-action', 'open-edit-trip-modal');
-      editBtn.className = 'mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg kinfolk-badge text-[11px] font-extrabold transition';
-      editBtn.innerHTML = '<i class="fa-solid fa-gear text-[var(--kinfolk-primary)] pointer-events-none"></i><span class="pointer-events-none">여행 기본 정보 · 인원 수정</span>';
-      titleEl.parentElement.appendChild(editBtn);
-    }
-    editBtn.classList.toggle('hidden', !isCreator);
+      if (!editBtn) {
+        editBtn = document.createElement('button');
+        editBtn.id = 'btnOpenEditTripInfoModal';
+        editBtn.type = 'button';
+        editBtn.setAttribute('data-action', 'open-edit-trip-modal');
+        // 킨포크 토큰 클래스 적용 (기존 bg-slate-100 등 제거)
+        editBtn.className = 'mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg kinfolk-badge text-[11px] font-extrabold transition';
+        editBtn.innerHTML = '<i class="fa-solid fa-gear text-[var(--kinfolk-primary)] pointer-events-none"></i><span class="pointer-events-none">여행 기본 정보 · 인원 수정</span>';
+        titleEl.parentElement.appendChild(editBtn);
+      }
+      editBtn.classList.toggle('hidden', !isCreator);
   }
 
   populateAllDaySelectors(trip);

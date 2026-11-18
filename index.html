@@ -27,19 +27,20 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+
   <style>
     /* ====================================================================
-       [추가] 킨포크 감성 어스톤 디자인 토큰 및 기본 스타일 중앙화
+       [리팩토링] 킨포크 감성 어스톤 디자인 토큰 및 공통 유틸리티 변수
        ==================================================================== */
     :root {
-      --kinfolk-bg: #FBF9F5;       /* 전체 앱 배경: 따뜻한 크림/오트밀 톤 */
-      --kinfolk-card: #FFFFFF;     /* 카드 및 모달 배경: 순백색 */
-      --kinfolk-border: #EAE3D9;   /* 테두리 및 구분선: 부드러운 모래색 */
-      --kinfolk-primary: #8C7A6B;  /* 주요 버튼 및 포인트: 어스톤 브라운 */
-      --kinfolk-primary-hover: #7A6E63; /* 버튼 호버 색상 */
-      --kinfolk-subtle: #F4EFEA;   /* 서브 배경 및 배지: 연한 오트밀 톤 */
-      --kinfolk-text-main: #2C2621;/* 메인 텍스트: 짙은 차콜 브라운 */
-      --kinfolk-text-sub: #7A6E63; /* 서브 텍스트: 차분한 회갈색 */
+      --kinfolk-bg: #FBF9F5;              /* 전체 앱 배경: 따뜻한 크림/오트밀 톤 */
+      --kinfolk-card: #FFFFFF;            /* 카드 및 모달 배경: 순백색 */
+      --kinfolk-border: #EAE3D9;          /* 테두리 및 구분선: 부드러운 모래색 */
+      --kinfolk-primary: #8C7A6B;         /* 주요 버튼 및 포인트: 어스톤 브라운 */
+      --kinfolk-primary-hover: #7A6E63;   /* 버튼 호버 색상 */
+      --kinfolk-subtle: #F4EFEA;          /* 서브 배경 및 배지: 연한 오트밀 톤 */
+      --kinfolk-text-main: #2C2621;       /* 메인 텍스트: 짙은 차콜 브라운 */
+      --kinfolk-text-sub: #7A6E63;        /* 서브 텍스트: 차분한 회갈색 */
     }
 
     body {
@@ -49,7 +50,35 @@
       padding-bottom: env(safe-area-inset-bottom, 5.5rem);
     }
 
-    /* 기존 스타일 유지 영역 */
+    /* 동적 생성 카드 및 모달 공통 킨포크 스타일 클래스 정의 */
+    .kinfolk-card {
+      background-color: var(--kinfolk-card) !important;
+      border: 1px solid var(--kinfolk-border) !important;
+      color: var(--kinfolk-text-main) !important;
+    }
+    .kinfolk-btn-primary {
+      background-color: var(--kinfolk-primary) !important;
+      color: #ffffff !important;
+    }
+    .kinfolk-btn-primary:hover {
+      background-color: var(--kinfolk-primary-hover) !important;
+    }
+    .kinfolk-input {
+      background-color: var(--kinfolk-bg) !important;
+      border: 1px solid var(--kinfolk-border) !important;
+      color: var(--kinfolk-text-main) !important;
+    }
+    .kinfolk-input:focus {
+      border-color: var(--kinfolk-primary) !important;
+      ring: 1px var(--kinfolk-primary) !important;
+    }
+    .kinfolk-badge {
+      background-color: var(--kinfolk-subtle) !important;
+      color: var(--kinfolk-text-sub) !important;
+      border: 1px solid var(--kinfolk-border) !important;
+    }
+
+    /* 기존 스크롤바 및 인쇄 스타일 유지 */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar {
       -ms-overflow-style: none;
@@ -622,6 +651,67 @@
       <div id="currencySelectorButtonsGrid" class="grid grid-cols-2 gap-2 max-h-60 overflow-y-auto no-scrollbar py-1">
         <!-- 통화 버튼들이 여기에 동적으로 생성됩니다 -->
       </div>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       여행 기본 정보 및 인원 수정 모달 (index.html 통합 관리)
+       ==================================================================== -->
+  <div id="modalEditTripInfo" class="hidden fixed inset-0 z-50 bg-[#2C2621]/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="kinfolk-card w-full max-w-sm rounded-2xl p-5 shadow-xl space-y-3 max-h-[90vh] overflow-y-auto">
+      <div class="flex items-center justify-between border-b border-[#EAE3D9] pb-2.5">
+        <div>
+          <h3 class="text-sm font-extrabold text-[#2C2621]">⚙️ 여행 기본 정보 및 인원 수정</h3>
+          <p class="text-[11px] text-[#7A6E63]">생성자(방장) 전용 설정입니다.</p>
+        </div>
+        <button type="button" data-close-modal="modalEditTripInfo" class="touch-target text-[#7A6E63] hover:text-[#2C2621]">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+      <form id="formEditTripInfo" class="space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-[#5C5349] block mb-1">여행 제목</label>
+          <input id="inputEditTripTitle" type="text" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-medium outline-none" required />
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-[#5C5349] block mb-1">여행지 (도시 / 국가)</label>
+          <input id="inputEditTripDestination" type="text" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-medium outline-none" required />
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-xs font-semibold text-[#5C5349] block mb-1">시작일</label>
+            <input id="inputEditTripStartDate" type="date" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-medium outline-none" required />
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-[#5C5349] block mb-1">종료일</label>
+            <input id="inputEditTripEndDate" type="date" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-medium outline-none" required />
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-xs font-semibold text-[#5C5349] block mb-1">기본 통화</label>
+            <select id="selectEditTripCurrency" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-bold outline-none">
+              <option value="KRW">KRW (한국 원)</option>
+              <option value="JPY">JPY (일본 엔)</option>
+              <option value="USD">USD (미국 달러)</option>
+              <option value="EUR">EUR (유로)</option>
+              <option value="ADD_CUSTOM_CURRENCY" class="font-extrabold text-[#8C7A6B]">➕ 통화 추가...</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-[#5C5349] block mb-1">총 참여 인원수(명)</label>
+            <input id="inputEditTripHeadcount" type="number" min="1" max="30" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-extrabold outline-none" required />
+          </div>
+        </div>
+        <div>
+          <label class="text-xs font-semibold text-[#5C5349] block mb-1">참여자 닉네임 목록 (쉼표 구분)</label>
+          <input id="inputEditTripMembers" type="text" placeholder="예: 나, 동행1, 동행2" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-medium outline-none" required />
+        </div>
+        <div class="pt-2 flex justify-end gap-2">
+          <button type="button" data-close-modal="modalEditTripInfo" class="touch-target px-4 rounded-xl text-xs font-semibold text-[#5C5349] bg-[#EAE3D9]">취소</button>
+          <button type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white kinfolk-btn-primary">수정 내용 저장</button>
+        </div>
+      </form>
     </div>
   </div>
   

@@ -3222,7 +3222,7 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
   }
 });
 
-// 새 여행 생성 제출 핸들러 (중복 선언 오류 해결 및 인원수 동기화)
+// 새 여행 생성 제출 핸들러 (오류 방지 및 인원수 동기화 최적화 버전)
 $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -3230,27 +3230,23 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const destination = ($('inputNewTripDestination')?.value || '').trim() || '여행지';
     const startDate = $('inputNewTripStartDate')?.value || new Date().toISOString().split('T')[0];
     const endDate = $('inputNewTripEndDate')?.value || startDate;
+    
     const baseCurrency = ($('selectNewTripCurrency')?.value || 'KRW').toUpperCase();
     const myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
-    
-    const exchangeAmount = Number($('inputNewTripExchangeAmount')?.value) || 0;
-    let exchangeKrw = Number($('inputNewTripExchangeKrw')?.value) || 0;
 
-    if (exchangeKrw <= 0 && exchangeAmount > 0) {
-      try {
-        const rate = await fetchLiveExchangeRate(baseCurrency);
-        exchangeKrw = Math.round(exchangeAmount * (rate || 1));
-      } catch (err) {
-        exchangeKrw = 0;
-      }
-    }
-
-    // [핵심] 닉네임 입력값을 쉼표 기준으로 쪼개어 members 배열 생성 (중복 선언 없음)
+    // 입력된 닉네임 목록(쉼표 기준)을 파싱하고, 그 개수를 총 인원수(headcount)로 자동 설정
     const rawMembers = $('inputNewTripMembers')?.value || '나';
     let members = rawMembers.split(',').map((m) => m.trim()).filter(Boolean);
     if (members.length === 0) members.push('나');
 
-    const headcount = members.length; // 입력된 닉네임 개수가 곧 정원수
+    const headcount = members.length;
+
+    while (members.length < headcount) {
+      members.push(`동행${members.length}`);
+    }
+    if (members.length > headcount) {
+      members = members.slice(0, headcount);
+    }
 
     const customCurrencies = ['JPY', 'USD', 'EUR'];
     if (!customCurrencies.includes(baseCurrency)) {
@@ -3265,28 +3261,26 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       endDate,
       baseCurrency,
       customCurrencies,
-      maxMembers: headcount, // 정원 반영
-      members,               // 닉네임 목록 반영
-      claimedMembers: { [members[0]]: deviceUid },
-      ownerUid: deviceUid,
-      memberIds: [deviceUid]
+      maxMembers: headcount,
+      members,
+      claimedMembers: { [members[0]]: getDeviceUid() },
+      ownerUid: getDeviceUid(),
+      memberIds: [getDeviceUid()]
     });
 
     trips.unshift(newTrip);
     privateBudgets[newTrip.id] = {
       myBudget: myBudget > 0 ? myBudget : 1500000,
-      myNickname: members[0],
-      exchangeAmount,
-      exchangeCurrency: baseCurrency,
-      exchangeKrw
+      myNickname: members[0]
     };
     saveLocalData();
 
     closeModalSafe('modalNewTrip');
-    enterTripDetail(newTrip.id);
-    await syncTripToFirestore(newTrip);
+    if (typeof enterTripDetail === 'function') {
+      enterTripDetail(newTrip.id);
+    }
   } catch (err) {
-    console.error('여행 생성 오류:', err);
+    console.error('새 여행 생성 오류:', err);
   }
 });
 

@@ -3301,10 +3301,7 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     trips.unshift(newTrip);
     privateBudgets[newTrip.id] = {
       myBudget: myBudget > 0 ? myBudget : 1500000,
-      myNickname: members[0],
-      exchangeAmount,
-      exchangeCurrency: baseCurrency,
-      exchangeKrw
+      myNickname: members[0]
     };
     saveLocalData();
 

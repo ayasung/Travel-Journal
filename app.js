@@ -3222,7 +3222,7 @@ $('formJoinTripByCode')?.addEventListener('submit', async (e) => {
   }
 });
 
-// 새 여행 생성 시 예산 및 통화 설정 반영
+// 새 여행 생성 제출 핸들러 (중복 선언 오류 해결 및 인원수 동기화)
 $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -3230,45 +3230,43 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const destination = ($('inputNewTripDestination')?.value || '').trim() || '여행지';
     const startDate = $('inputNewTripStartDate')?.value || new Date().toISOString().split('T')[0];
     const endDate = $('inputNewTripEndDate')?.value || startDate;
-    
     const baseCurrency = ($('selectNewTripCurrency')?.value || 'KRW').toUpperCase();
     const myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
+    
+    const exchangeAmount = Number($('inputNewTripExchangeAmount')?.value) || 0;
+    let exchangeKrw = Number($('inputNewTripExchangeKrw')?.value) || 0;
 
-    // [수정] 존재하지 않는 인원수 입력창 대신, 쉼표로 입력된 닉네임 목록 개수를 인원수로 설정
+    if (exchangeKrw <= 0 && exchangeAmount > 0) {
+      try {
+        const rate = await fetchLiveExchangeRate(baseCurrency);
+        exchangeKrw = Math.round(exchangeAmount * (rate || 1));
+      } catch (err) {
+        exchangeKrw = 0;
+      }
+    }
+
+    // [핵심] 닉네임 입력값을 쉼표 기준으로 쪼개어 members 배열 생성 (중복 선언 없음)
     const rawMembers = $('inputNewTripMembers')?.value || '나';
     let members = rawMembers.split(',').map((m) => m.trim()).filter(Boolean);
     if (members.length === 0) members.push('나');
 
-    const headcount = members.length;
-    
-    while (members.length < headcount) {
-      members.push(`동행${members.length}`);
-    }
-    if (members.length > headcount) {
-      members = members.slice(0, headcount);
-    }
+    const headcount = members.length; // 입력된 닉네임 개수가 곧 정원수
 
-    // 👇 [수정 포인트] 기본 상시 통화 외에 사용자가 고른 기본 통화도 커스텀 리스트에 함께 담아주기
     const customCurrencies = ['JPY', 'USD', 'EUR'];
     if (!customCurrencies.includes(baseCurrency)) {
       customCurrencies.push(baseCurrency);
     }
 
-    // 여행 생성 시점 실시간 환율 자동 갱신
-    try {
-      await fetchLiveExchangeRate(baseCurrency);
-    } catch (err) {}
-    
     const newTrip = normalizeTrip({
       id: 'trip_' + Date.now(),
       title,
       destination,
       startDate,
       endDate,
-      baseCurrency,      // 선택한 기본 통화 전달
-      customCurrencies,  // 추가된 통화 목록 전달
-      maxMembers: headcount,
-      members,
+      baseCurrency,
+      customCurrencies,
+      maxMembers: headcount, // 정원 반영
+      members,               // 닉네임 목록 반영
       claimedMembers: { [members[0]]: deviceUid },
       ownerUid: deviceUid,
       memberIds: [deviceUid]
@@ -3282,7 +3280,7 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
       exchangeCurrency: baseCurrency,
       exchangeKrw
     };
-    saveLocalData()
+    saveLocalData();
 
     closeModalSafe('modalNewTrip');
     enterTripDetail(newTrip.id);

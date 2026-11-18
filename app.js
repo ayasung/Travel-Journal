@@ -1161,11 +1161,12 @@ function renderDayChipsBar(trip) {
   for (let i = 1; i <= totalDays; i++) {
     const dateStr = getDateForTripDay(trip, i).slice(5);
     const isSelected = Number(currentItineraryDay) === i;
+    
     chipsHtml.push(`
       <button type="button" data-action="select-day-chip" data-day="${i}" class="touch-target shrink-0 px-3 py-1.5 rounded-xl text-xs transition ${
         isSelected
-          ? 'kinfolk-btn-primary font-extrabold shadow-2xs' : 'kinfolk-card text-[var(--kinfolk-text-sub)] font-bold hover:bg-[var(--kinfolk-subtle)]'
-          : 'bg-white border border-slate-200 text-slate-600 font-bold hover:bg-slate-50'
+          ? 'kinfolk-btn-primary font-extrabold shadow-2xs'
+          : 'kinfolk-card text-[var(--kinfolk-text-sub)] font-bold hover:bg-[var(--kinfolk-subtle)]'
       }">
         Day ${i} <span class="text-[10px] opacity-80 ml-0.5">(${dateStr})</span>
       </button>

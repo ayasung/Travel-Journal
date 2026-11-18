@@ -2445,6 +2445,7 @@ document.body.addEventListener('click', async (e) => {
         openEditTripInfoModal();
         break;
 
+      case 'go-home':
       case 'back-to-home':
         exitTripDetailToHome();
         break;

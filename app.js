@@ -963,7 +963,7 @@ function renderHomeArchiveReviews() {
       const rating = Number(rv.rating) || 5;
       const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
       return `
-        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-1.5">
+        <div class="kinfolk-card p-3.5 rounded-2xl shadow-xs space-y-1.5">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 flex-wrap">
@@ -1036,7 +1036,7 @@ function switchMainTab(tabName) {
   document.querySelectorAll('.main-tab-btn').forEach((btn) => {
     const isMatch = btn.getAttribute('data-main-tab') === tabName;
     btn.className = isMatch
-      ? 'main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-xl bg-sky-50 text-sky-600 font-extrabold text-[11px] transition'
+      ? 'main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-xl bg-[var(--kinfolk-subtle)] text-[var(--kinfolk-text-main)] font-extrabold text-[11px] transition'
       : 'main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 font-bold text-[11px] transition';
   });
 
@@ -1104,7 +1104,7 @@ function renderDetailView() {
       editBtn.type = 'button';
       editBtn.setAttribute('data-action', 'open-edit-trip-modal');
       editBtn.className =
-        'mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-sky-50 text-slate-700 hover:text-sky-700 border border-slate-200 text-[11px] font-extrabold transition';
+        'mt-1.5 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg kinfolk-badge text-[11px] font-extrabold transition';
       editBtn.innerHTML = '<i class="fa-solid fa-gear text-sky-600 pointer-events-none"></i><span class="pointer-events-none">여행 기본 정보 · 인원 수정</span>';
       titleEl.parentElement.appendChild(editBtn);
     }
@@ -1164,7 +1164,7 @@ function renderDayChipsBar(trip) {
     chipsHtml.push(`
       <button type="button" data-action="select-day-chip" data-day="${i}" class="touch-target shrink-0 px-3 py-1.5 rounded-xl text-xs transition ${
         isSelected
-          ? 'bg-sky-600 text-white font-extrabold shadow-2xs'
+          ? 'kinfolk-btn-primary font-extrabold shadow-2xs' : 'kinfolk-card text-[var(--kinfolk-text-sub)] font-bold hover:bg-[var(--kinfolk-subtle)]'
           : 'bg-white border border-slate-200 text-slate-600 font-bold hover:bg-slate-50'
       }">
         Day ${i} <span class="text-[10px] opacity-80 ml-0.5">(${dateStr})</span>
@@ -1349,33 +1349,29 @@ function renderItineraryTab(trip) {
     return;
   }
 
-  container.innerHTML = items
-    .map(
-      (item, idx) => `
-      <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex items-start gap-3">
-        <span class="w-6 h-6 rounded-full bg-sky-100 text-sky-700 text-xs font-extrabold flex items-center justify-center shrink-0 mt-0.5">${idx + 1}</span>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-1.5">
-              <span class="text-xs font-extrabold text-sky-600">${escapeHtml(item.time)}</span>
-              ${item.bookingId ? '<span class="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">예약연동</span>' : ''}
-            </div>
-            <div class="flex items-center gap-0.5 shrink-0">
-              <button type="button" data-action="edit-itinerary" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="일정 수정">
-                <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
-              </button>
-              <button type="button" data-action="delete-itinerary" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="일정 삭제">
-                <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
-              </button>
-            </div>
+  container.innerHTML = items.map((item, idx) => `
+    <div class="kinfolk-card p-3.5 rounded-2xl shadow-xs flex items-start gap-3">
+      <span class="w-6 h-6 rounded-full bg-[var(--kinfolk-subtle)] text-[var(--kinfolk-primary)] text-xs font-extrabold flex items-center justify-center shrink-0 mt-0.5">${idx + 1}</span>
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-1.5">
+            <span class="text-xs font-extrabold text-[var(--kinfolk-primary)]">${escapeHtml(item.time)}</span>
+            ${item.bookingId ? '<span class="text-[9px] font-bold kinfolk-badge px-1.5 py-0.5 rounded">예약연동</span>' : ''}
           </div>
-          <h4 class="text-sm font-bold text-slate-800 truncate">${escapeHtml(item.place)}</h4>
-          ${item.memo ? `<p class="text-xs text-slate-500 mt-1 bg-slate-50 p-2 rounded-lg break-words">${escapeHtml(item.memo)}</p>` : ''}
+          <div class="flex items-center gap-0.5 shrink-0">
+            <button type="button" data-action="edit-itinerary" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-[var(--kinfolk-primary)] transition" title="일정 수정">
+              <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
+            </button>
+            <button type="button" data-action="delete-itinerary" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="일정 삭제">
+              <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
+            </button>
+          </div>
         </div>
+        <h4 class="text-sm font-bold text-[var(--kinfolk-text-main)] truncate">${escapeHtml(item.place)}</h4>
+        ${item.memo ? `<p class="text-xs text-[var(--kinfolk-text-sub)] mt-1 bg-[var(--kinfolk-bg)] p-2 rounded-lg break-words">${escapeHtml(item.memo)}</p>` : ''}
       </div>
-    `
-    )
-    .join('');
+    </div>
+  `).join('');
 }
 
 function renderBookingsTab(trip) {
@@ -1405,44 +1401,30 @@ function renderBookingsTab(trip) {
     '티켓/투어': 'bg-emerald-100 text-emerald-700'
   };
 
-  container.innerHTML = [...filtered]
-    .reverse()
-    .map((b) => {
-      const colorCls = badgeColors[b.category] || 'bg-slate-100 text-slate-700';
-      const costInfo =
-        Number(b.amount) > 0
-          ? `<span class="text-xs font-extrabold text-slate-700">${Number(b.amount).toLocaleString()} ${escapeHtml(b.currency || 'KRW')}</span>`
-          : '';
-
-      return `
-        <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
-          <div class="flex items-start justify-between gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-[10px] font-extrabold px-2 py-0.5 rounded ${colorCls}">${escapeHtml(b.category)}</span>
-                <span class="text-[11px] font-semibold text-slate-400">${escapeHtml(b.date || '')} ${escapeHtml(b.time || '')}</span>
-                ${b.autoSync ? '<span class="text-[9px] font-bold bg-sky-50 text-sky-600 px-1.5 py-0.5 rounded">일정·지출 연동됨</span>' : ''}
-              </div>
-              <h4 class="text-sm font-extrabold text-slate-800 mt-1 truncate">${escapeHtml(b.title)}</h4>
+  container.innerHTML = [...filtered].reverse().map((b) => {
+    return `
+      <div class="kinfolk-card p-3.5 rounded-2xl shadow-xs space-y-2">
+        <div class="flex items-start justify-between gap-2">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-[10px] font-extrabold px-2 py-0.5 rounded kinfolk-badge">${escapeHtml(b.category)}</span>
+              <span class="text-[11px] font-semibold text-[var(--kinfolk-text-sub)]">${escapeHtml(b.date || '')} ${escapeHtml(b.time || '')}</span>
             </div>
-            <div class="flex items-center gap-0.5 shrink-0">
-              <button type="button" data-action="edit-booking" data-id="${escapeHtml(b.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="예약 수정">
-                <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
-              </button>
-              <button type="button" data-action="delete-booking" data-id="${escapeHtml(b.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="예약 삭제">
-                <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
-              </button>
-            </div>
+            <h4 class="text-sm font-extrabold text-[var(--kinfolk-text-main)] mt-1 truncate">${escapeHtml(b.title)}</h4>
           </div>
-          <div class="flex items-center justify-between gap-2">
-            ${b.code ? `<span class="font-mono text-[11px] bg-slate-100 text-slate-700 px-2.5 py-1 rounded-lg">예약번호: <strong>${escapeHtml(b.code)}</strong></span>` : '<span></span>'}
-            ${costInfo}
+          <div class="flex items-center gap-0.5 shrink-0">
+            <button type="button" data-action="edit-booking" data-id="${escapeHtml(b.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-[var(--kinfolk-primary)] transition" title="예약 수정">
+              <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
+            </button>
+            <button type="button" data-action="delete-booking" data-id="${escapeHtml(b.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="예약 삭제">
+              <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
+            </button>
           </div>
-          ${b.memo ? `<p class="text-xs text-slate-500 bg-slate-50 p-2.5 rounded-xl break-words">${escapeHtml(b.memo)}</p>` : ''}
         </div>
-      `;
-    })
-    .join('');
+        ...
+      </div>
+    `;
+  }).join('');
 }
 
 function renderExpensesTab(trip) {
@@ -1587,7 +1569,7 @@ listEl.innerHTML = [...expenses]
     }).join('');
 
     return `
-      <div class="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+      <div class="kinfolk-card p-3.5 rounded-2xl shadow-xs space-y-2">
         <div class="flex items-start justify-between gap-2">
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-1.5 flex-wrap">

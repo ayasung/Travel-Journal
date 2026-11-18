@@ -53,6 +53,7 @@ const STORAGE_PRIVATE_KEY = 'TJ_PRIVATE_BUDGETS_V9';
 const STORAGE_ALL_REVIEWS_KEY = 'TJ_ALL_REVIEWS_ARCHIVE_V9';
 const STORAGE_FLIGHT_CACHE_KEY = 'TJ_FLIGHT_CACHE_V9';
 const STORAGE_UID_KEY = 'TJ_DEVICE_USER_UID_V9';
+const STORAGE_DELETED_IDS_KEY = 'TJ_DELETED_IDS_V8'; // [추가] 삭제된 여행 ID 영구 보관용 키
 
 export const GLOBAL_CURRENCY_OPTIONS = [
   { code: 'JPY', name: 'JPY (일본 엔)' },
@@ -520,7 +521,69 @@ function normalizeTrip(raw) {
   };
 }
 
+// ============================================================================
+// [추가] 모든 구버전 스토리지 키를 뒤져서 삭제된 여행 데이터를 즉시 파기하는 헬퍼 함수
+// ============================================================================
+function purgeTripFromAllStorage(tripId) {
+  deletedTripIds.add(tripId);
+  try {
+    localStorage.setItem(STORAGE_DELETED_IDS_KEY, JSON.stringify(Array.from(deletedTripIds)));
+  } catch (err) {}
+
+  // 1. 모든 구버전 여행 아카이브 키에서 해당 여행 제거
+  const tripKeys = [
+    STORAGE_TRIPS_KEY,
+    'TJ_TRIPS_ARCHIVE_V8',
+    'TJ_TRIPS_ARCHIVE_V7',
+    'TJ_TRIPS_ARCHIVE_V6',
+    'TJ_TRIPS_ARCHIVE_V5',
+    'TRAVEL_JOURNAL_TRIPS_V1'
+  ];
+  tripKeys.forEach((key) => {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter((t) => t.id !== tripId);
+          localStorage.setItem(key, JSON.stringify(filtered));
+        }
+      }
+    } catch (e) {}
+  });
+
+  // 2. 모든 구버전 개인 예산 키에서 해당 예산 제거
+  const privKeys = [
+    STORAGE_PRIVATE_KEY,
+    'TJ_PRIVATE_BUDGETS_V8',
+    'TJ_PRIVATE_BUDGETS_V7',
+    'TJ_PRIVATE_BUDGETS_V6',
+    'TRAVEL_JOURNAL_PRIVATE_BUDGETS_V1'
+  ];
+  privKeys.forEach((pk) => {
+    try {
+      const pRaw = localStorage.getItem(pk);
+      if (pRaw) {
+        const parsedPriv = JSON.parse(pRaw);
+        if (parsedPriv && typeof parsedPriv === 'object' && parsedPriv[tripId]) {
+          delete parsedPriv[tripId];
+          localStorage.setItem(pk, JSON.stringify(parsedPriv));
+        }
+      }
+    } catch (e) {}
+  });
+}
+
 function loadLocalData() {
+  // [추가] 영구 저장된 삭제 ID 목록 복원
+  try {
+    const dRaw = localStorage.getItem(STORAGE_DELETED_IDS_KEY);
+    if (dRaw) {
+      const parsedIds = JSON.parse(dRaw);
+      if (Array.isArray(parsedIds)) deletedTripIds = new Set(parsedIds);
+    }
+  } catch (e) {}
+  
   const tripKeys = [
     STORAGE_TRIPS_KEY,
     'TJ_TRIPS_ARCHIVE_V8',
@@ -2494,9 +2557,9 @@ document.body.addEventListener('click', async (e) => {
         e.stopPropagation();
         const target = trips.find((t) => t.id === tripId);
         if (target && confirm(`'${target.title}' 여행을 삭제하시겠습니까?`)) {
-          // 1. 삭제된 ID 기록
-          deletedTripIds.add(tripId);
-      
+          // 1. 구버전 키 전체에서 즉시 파기 및 영구 차단 등록
+          purgeTripFromAllStorage(tripId);
+                
           // 2. 로컬 배열 및 스토리지에서 제거
           trips = trips.filter((t) => t.id !== tripId);
           delete privateBudgets[tripId];

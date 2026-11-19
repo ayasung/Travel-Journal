@@ -723,6 +723,33 @@
             <div><label class="text-[11px] font-semibold text-[#5C5349] block mb-1">체크아웃 시간</label><input id="inputHotelCheckOutTime" type="time" value="11:00" class="touch-target w-full kinfolk-input rounded-xl px-2.5 text-xs outline-none" /></div>
           </div>
         </div>
+        <!-- 렌터카 박스 -->
+        <div id="bookingRentalCarBox" class="hidden space-y-2.5 bg-[#F4EFEA] border border-[#EAE3D9] rounded-xl p-3">
+          <div class="flex items-center justify-between">
+            <span class="text-xs font-extrabold text-[#2C2621]">렌터카 대여·반납 기간 및 장소</span>
+            <span id="rentalDurationBadge" class="text-[11px] font-extrabold px-2 py-0.5 rounded-full kinfolk-btn-primary">1일 대여</span>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-[11px] font-semibold text-[#5C5349] block mb-1">대여(시작) 날짜</label><input id="inputRentalPickupDate" type="date" class="touch-target w-full kinfolk-input rounded-xl px-2.5 text-xs outline-none" /></div>
+            <div><label class="text-[11px] font-semibold text-[#5C5349] block mb-1">대여 시간</label><input id="inputRentalPickupTime" type="time" value="10:00" class="touch-target w-full kinfolk-input rounded-xl px-2.5 text-xs outline-none" /></div>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="text-[11px] font-semibold text-[#5C5349] block mb-1">반납(종료) 날짜</label><input id="inputRentalReturnDate" type="date" class="touch-target w-full kinfolk-input rounded-xl px-2.5 text-xs outline-none" /></div>
+            <div><label class="text-[11px] font-semibold text-[#5C5349] block mb-1">반납 시간</label><input id="inputRentalReturnTime" type="time" value="18:00" class="touch-target w-full kinfolk-input rounded-xl px-2.5 text-xs outline-none" /></div>
+          </div>
+          <div>
+            <label class="text-[11px] font-semibold text-[#5C5349] block mb-1">대여 장소 (빌리는 곳)</label>
+            <input id="inputRentalPickupPlace" type="text" placeholder="예: 나리타 공항 1터미널 영업소" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-medium outline-none" />
+          </div>
+          <label class="flex items-center gap-2 text-xs font-bold text-[#2C2621] cursor-pointer pt-0.5">
+            <input id="chkRentalDifferentDropoff" type="checkbox" class="w-4 h-4 rounded border-[#EAE3D9] text-[#8C7A6B]" />
+            <span>편도 반납 (빌리는 곳과 반납하는 곳이 다름)</span>
+          </label>
+          <div id="rentalDropoffLocationWrapper" class="hidden">
+            <label class="text-[11px] font-semibold text-[#5C5349] block mb-1">반납 장소 (돌려주는 곳)</label>
+            <input id="inputRentalReturnPlace" type="text" placeholder="예: 신주쿠역 서쪽 출구 영업소" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-medium outline-none" />
+          </div>
+        </div>
         <!-- 일반 예약 박스 -->
         <div id="bookingStandardDateBox" class="hidden grid grid-cols-2 gap-2">
           <div><label class="text-xs font-semibold text-[#5C5349] block mb-1">이용 날짜</label><input id="inputBookingDate" type="date" class="touch-target w-full kinfolk-input rounded-xl px-2.5 text-xs outline-none" /></div>

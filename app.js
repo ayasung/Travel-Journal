@@ -2015,11 +2015,14 @@ function renderBookingDynamicFields(category, existingData = null) {
       }
       updateHotelStayDurationBadge();
     } else if (category === '렌터카') {
+      const startVal = existingData?.rental?.pickupDate || existingData?.date || trip?.startDate || '';
+      const endVal = existingData?.rental?.returnDate || trip?.endDate || startVal;
       if ($('inputRentalPickupDate')) {
-        $('inputRentalPickupDate').value = existingData?.rental?.pickupDate || existingData?.date || trip?.startDate || '';
+        $('inputRentalPickupDate').value = startVal;
       }
       if ($('inputRentalReturnDate')) {
-        $('inputRentalReturnDate').value = existingData?.rental?.returnDate || trip?.endDate || trip?.startDate || '';
+        $('inputRentalReturnDate').min = startVal;
+        $('inputRentalReturnDate').value = endVal && endVal < startVal ? startVal : endVal;
       }
       if ($('inputRentalPickupTime')) $('inputRentalPickupTime').value = existingData?.rental?.pickupTime || '10:00';
       if ($('inputRentalReturnTime')) $('inputRentalReturnTime').value = existingData?.rental?.returnTime || '18:00';
@@ -2888,7 +2891,6 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-
     // 새 여행 만들기 통화 선택 및 '통화 추가' 버튼 메뉴 모달 연동
     if (target.id === 'selectNewTripCurrency') {
       if (target.value === 'ADD_CUSTOM_CURRENCY') {
@@ -2973,14 +2975,26 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-    if (target.id === 'inputRentalPickDate' || target.id === 'inputRentalDropDate') {
-      updateRentalDurationBadge();
+    if (target.id === 'inputRentalPickupDate' || target.id === 'inputRentalReturnDate') {
+      const pickEl = $('inputRentalPickupDate');
+      const retEl = $('inputRentalReturnDate');
+      if (pickEl && retEl && pickEl.value) {
+        retEl.min = pickEl.value;
+        if (retEl.value && retEl.value < pickEl.value) {
+          retEl.value = pickEl.value;
+        }
+      }
+      const badge = $('rentalDurationBadge');
+      if (badge && pickEl?.value && retEl?.value) {
+        const diffDays = Math.round((new Date(retEl.value) - new Date(pickEl.value)) / (1000 * 60 * 60 * 24));
+        badge.textContent = diffDays >= 0 ? `${diffDays + 1}일 대여` : '날짜 확인 필요';
+      }
       return;
     }
-
-    if (target.id === 'chkRentalSameLocation') {
-      const isSame = target.checked;
-      $('rentalDropLocWrapper')?.classList.toggle('hidden', isSame);
+    
+    if (target.id === 'chkRentalDifferentDropoff') {
+      const isDifferent = target.checked;
+      $('rentalDropoffLocationWrapper')?.classList.toggle('hidden', !isDifferent);
       return;
     }
 
@@ -3554,6 +3568,14 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
     } else if (category === '렌터카') {
       const pickupDate = $('inputRentalPickupDate')?.value || trip.startDate;
       const returnDate = $('inputRentalReturnDate')?.value || trip.endDate;
+      if (pickupDate && returnDate && returnDate < pickupDate) {
+        alert('렌터카 반납 날짜는 대여 시작 날짜보다 앞설 수 없습니다.');
+        if ($('inputRentalReturnDate')) {
+          $('inputRentalReturnDate').min = pickupDate;
+          $('inputRentalReturnDate').value = pickupDate;
+        }
+        return;
+      }
       const pickupTime = $('inputRentalPickupTime')?.value || '10:00';
       const returnTime = $('inputRentalReturnTime')?.value || '18:00';
       const pickupPlace = ($('inputRentalPickupPlace')?.value || '').trim() || '렌트 대여소';

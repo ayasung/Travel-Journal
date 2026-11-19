@@ -2132,6 +2132,43 @@ function openAddScheduleModal() {
   if ($('inputModalScheduleTime')) $('inputModalScheduleTime').value = '10:00';
   if ($('inputModalSchedulePlace')) $('inputModalSchedulePlace').value = '';
   if ($('inputModalScheduleMemo')) $('inputModalScheduleMemo').value = '';
+
+  const priv = getMyPrivateInfo(trip);
+  const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : [priv.myNickname];
+
+  if ($('chkScheduleSyncExpense')) $('chkScheduleSyncExpense').checked = false;
+  $('scheduleExpenseFieldsBox')?.classList.add('hidden');
+  if ($('selectScheduleExpCurrency')) {
+    populateCurrencySelect($('selectScheduleExpCurrency'), trip, trip.baseCurrency || 'KRW');
+  }
+  if ($('inputScheduleExpAmount')) $('inputScheduleExpAmount').value = '';
+  if ($('selectScheduleExpPayer')) {
+    $('selectScheduleExpPayer').innerHTML = members
+      .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+      .join('');
+    $('selectScheduleExpPayer').value = priv.myNickname;
+  }
+  if ($('scheduleExpParticipantsGroup')) {
+    $('scheduleExpParticipantsGroup').innerHTML = members
+      .map(
+        (m) => `
+        <label class="inline-flex items-center gap-1 text-[11px] bg-white border border-[#EAE3D9] px-2 py-1 rounded-lg">
+          <input type="checkbox" value="${escapeHtml(m)}" checked class="sch-exp-part-chk" />
+          <span>${escapeHtml(m)}</span>
+        </label>
+      `
+      )
+      .join('');
+  }
+
+  if ($('chkScheduleSyncBooking')) $('chkScheduleSyncBooking').checked = false;
+  $('scheduleBookingFieldsBox')?.classList.add('hidden');
+  if ($('selectScheduleBookingCategory')) $('selectScheduleBookingCategory').value = '티켓/투어';
+  if ($('inputScheduleBookingCode')) $('inputScheduleBookingCode').value = '';
+
+  $('scheduleUpdateLinkedOptionRow')?.classList.add('hidden');
+  if ($('chkScheduleUpdateLinkedItems')) $('chkScheduleUpdateLinkedItems').checked = true;
+
   openModalSafe('modalAddSchedule');
 }
 
@@ -2552,17 +2589,83 @@ document.body.addEventListener('click', async (e) => {
           if ($('inputModalScheduleTime')) $('inputModalScheduleTime').value = item.time || '10:00';
           if ($('inputModalSchedulePlace')) $('inputModalSchedulePlace').value = item.place || '';
           if ($('inputModalScheduleMemo')) $('inputModalScheduleMemo').value = item.memo || '';
+    
+          const priv = getMyPrivateInfo(trip);
+          const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : [priv.myNickname];
+          const linkedExp = item.linkedExpenseId
+            ? (trip.expenses || []).find((ex) => ex.id === item.linkedExpenseId)
+            : null;
+          const linkedBk = item.linkedBookingId
+            ? (trip.bookings || []).find((b) => b.id === item.linkedBookingId)
+            : null;
+    
+          const hasLinked = Boolean(linkedExp || linkedBk);
+          $('scheduleUpdateLinkedOptionRow')?.classList.toggle('hidden', !hasLinked);
+          $('scheduleUpdateLinkedOptionRow')?.classList.toggle('flex', hasLinked);
+          if ($('chkScheduleUpdateLinkedItems')) $('chkScheduleUpdateLinkedItems').checked = hasLinked;
+    
+          if ($('chkScheduleSyncExpense')) $('chkScheduleSyncExpense').checked = Boolean(linkedExp);
+          $('scheduleExpenseFieldsBox')?.classList.toggle('hidden', !linkedExp);
+          if ($('selectScheduleExpCurrency')) {
+            populateCurrencySelect($('selectScheduleExpCurrency'), trip, linkedExp?.currency || trip.baseCurrency || 'KRW');
+          }
+          if ($('inputScheduleExpAmount')) $('inputScheduleExpAmount').value = linkedExp?.amount || '';
+          if ($('selectScheduleExpPayer')) {
+            $('selectScheduleExpPayer').innerHTML = members
+              .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+              .join('');
+            $('selectScheduleExpPayer').value = linkedExp?.payer || priv.myNickname;
+          }
+          if ($('scheduleExpParticipantsGroup')) {
+            const activeParts = Array.isArray(linkedExp?.participants) ? linkedExp.participants : members;
+            $('scheduleExpParticipantsGroup').innerHTML = members
+              .map(
+                (m) => `
+                <label class="inline-flex items-center gap-1 text-[11px] bg-white border border-[#EAE3D9] px-2 py-1 rounded-lg">
+                  <input type="checkbox" value="${escapeHtml(m)}" ${activeParts.includes(m) ? 'checked' : ''} class="sch-exp-part-chk" />
+                  <span>${escapeHtml(m)}</span>
+                </label>
+              `
+              )
+              .join('');
+          }
+    
+          if ($('chkScheduleSyncBooking')) $('chkScheduleSyncBooking').checked = Boolean(linkedBk);
+          $('scheduleBookingFieldsBox')?.classList.toggle('hidden', !linkedBk);
+          if ($('selectScheduleBookingCategory')) {
+            $('selectScheduleBookingCategory').value = linkedBk?.category || '티켓/투어';
+          }
+          if ($('inputScheduleBookingCode')) $('inputScheduleBookingCode').value = linkedBk?.code || '';
+    
           openModalSafe('modalAddSchedule');
         }
         break;
       }
-
+    
       case 'delete-itinerary': {
         const trip = getActiveTrip();
-        if (trip && confirm('이 일정을 삭제하시겠습니까?')) {
+        const targetItem = trip?.itineraries?.find((s) => s.id === id);
+        if (trip && targetItem && confirm('이 일정을 삭제하시겠습니까?')) {
+          const hasLinkedExp = Boolean(targetItem.linkedExpenseId && (trip.expenses || []).some((e) => e.id === targetItem.linkedExpenseId));
+          const hasLinkedBk = Boolean(targetItem.linkedBookingId && (trip.bookings || []).some((b) => b.id === targetItem.linkedBookingId));
+    
+          let deleteLinkedToo = false;
+          if (hasLinkedExp || hasLinkedBk) {
+            deleteLinkedToo = confirm('연결된 예약 및 지출 내역도 함께 삭제하시겠습니까?\n(확인을 누르면 함께 삭제되고, 취소를 누르면 일정만 삭제됩니다.)');
+          }
+    
           trip.itineraries = (trip.itineraries || []).filter((s) => s.id !== id);
+          if (deleteLinkedToo) {
+            if (targetItem.linkedExpenseId) {
+              trip.expenses = (trip.expenses || []).filter((ex) => ex.id !== targetItem.linkedExpenseId);
+            }
+            if (targetItem.linkedBookingId) {
+              trip.bookings = (trip.bookings || []).filter((b) => b.id !== targetItem.linkedBookingId);
+            }
+          }
+    
           saveLocalData();
-          renderItineraryTab(trip);
+          renderDetailView();
           await syncTripToFirestore(trip);
         }
         break;
@@ -3040,6 +3143,16 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
+    if (target.id === 'chkScheduleSyncExpense') {
+      $('scheduleExpenseFieldsBox')?.classList.toggle('hidden', !target.checked);
+      return;
+    }
+    
+    if (target.id === 'chkScheduleSyncBooking') {
+      $('scheduleBookingFieldsBox')?.classList.toggle('hidden', !target.checked);
+      return;
+    }
+
     if (target.id === 'selectBookingCategory') {
       const cat = target.value;
       const trip = tripForSelect;
@@ -3434,34 +3547,127 @@ $('formCreateSchedule')?.addEventListener('submit', async (e) => {
     if (!trip) return;
 
     const day = Number($('selectModalScheduleDay')?.value) || 1;
-    const time = $('inputModalScheduleTime')?.value || '10:00';
+    const time = ($('inputModalScheduleTime')?.value || '10:00').trim();
     const place = ($('inputModalSchedulePlace')?.value || '').trim();
     const memo = ($('inputModalScheduleMemo')?.value || '').trim();
-    if (!place) return;
+
+    if (!place) {
+      alert('장소 / 일정명을 입력해주세요.');
+      return;
+    }
+
+    const syncExp = Boolean($('chkScheduleSyncExpense')?.checked);
+    const syncBk = Boolean($('chkScheduleSyncBooking')?.checked);
+    const updateLinked = editingScheduleId
+      ? Boolean($('chkScheduleUpdateLinkedItems')?.checked)
+      : true;
+
+    const expCurrency = ($('selectScheduleExpCurrency')?.value || trip.baseCurrency || 'KRW').toUpperCase();
+    const expAmount = Number($('inputScheduleExpAmount')?.value) || 0;
+    const expPayer = $('selectScheduleExpPayer')?.value || getMyPrivateInfo(trip).myNickname;
+    const expPartChks = document.querySelectorAll('.sch-exp-part-chk:checked');
+    const expParticipants =
+      expPartChks.length > 0
+        ? Array.from(expPartChks).map((c) => c.value)
+        : [expPayer];
+
+    const bkCategory = $('selectScheduleBookingCategory')?.value || '티켓/투어';
+    const bkCode = ($('inputScheduleBookingCode')?.value || '').trim().toUpperCase();
+    const scheduleDate = typeof getDateForTripDay === 'function'
+      ? getDateForTripDay(trip, day)
+      : trip.startDate;
 
     if (!Array.isArray(trip.itineraries)) trip.itineraries = [];
+    if (!Array.isArray(trip.expenses)) trip.expenses = [];
+    if (!Array.isArray(trip.bookings)) trip.bookings = [];
+
+    const existingItem = editingScheduleId
+      ? trip.itineraries.find((s) => s.id === editingScheduleId)
+      : null;
+
+    let linkedExpenseId = existingItem?.linkedExpenseId || null;
+    let linkedBookingId = existingItem?.linkedBookingId || null;
+
+    if (updateLinked) {
+      if (syncExp && expAmount > 0) {
+        const rateToKrw = getCachedRateToKrw(expCurrency);
+        const expId = linkedExpenseId || 'ex_sch_' + Date.now();
+        const expObj = {
+          id: expId,
+          title: place,
+          currency: expCurrency,
+          amount: expAmount,
+          rateToKrw,
+          payer: expPayer,
+          participants: expParticipants,
+          date: scheduleDate || trip.startDate
+        };
+        const expIdx = trip.expenses.findIndex((ex) => ex.id === expId);
+        if (expIdx >= 0) {
+          trip.expenses[expIdx] = { ...trip.expenses[expIdx], ...expObj };
+        } else {
+          trip.expenses.push(expObj);
+        }
+        linkedExpenseId = expId;
+      } else if (!syncExp && linkedExpenseId) {
+        trip.expenses = trip.expenses.filter((ex) => ex.id !== linkedExpenseId);
+        linkedExpenseId = null;
+      }
+
+      if (syncBk) {
+        const bkId = linkedBookingId || 'bk_sch_' + Date.now();
+        const bkObj = {
+          id: bkId,
+          category: bkCategory,
+          code: bkCode,
+          title: place,
+          date: scheduleDate || trip.startDate,
+          time,
+          memo,
+          currency: syncExp && expAmount > 0 ? expCurrency : (trip.baseCurrency || 'KRW'),
+          amount: syncExp && expAmount > 0 ? expAmount : 0,
+          autoSync: false,
+          payer: expPayer,
+          participants: expParticipants
+        };
+        const bkIdx = trip.bookings.findIndex((b) => b.id === bkId);
+        if (bkIdx >= 0) {
+          trip.bookings[bkIdx] = { ...trip.bookings[bkIdx], ...bkObj };
+        } else {
+          trip.bookings.push(bkObj);
+        }
+        linkedBookingId = bkId;
+      } else if (!syncBk && linkedBookingId) {
+        trip.bookings = trip.bookings.filter((b) => b.id !== linkedBookingId);
+        linkedBookingId = null;
+      }
+    }
+
+    const scheduleObj = {
+      id: editingScheduleId || 'it_' + Date.now(),
+      day,
+      time,
+      place,
+      memo,
+      linkedExpenseId,
+      linkedBookingId
+    };
 
     if (editingScheduleId) {
       const idx = trip.itineraries.findIndex((s) => s.id === editingScheduleId);
-      if (idx !== -1) {
-        trip.itineraries[idx] = { ...trip.itineraries[idx], day, time, place, memo };
+      if (idx >= 0) {
+        trip.itineraries[idx] = { ...trip.itineraries[idx], ...scheduleObj };
+      } else {
+        trip.itineraries.push(scheduleObj);
       }
       editingScheduleId = null;
     } else {
-      trip.itineraries.push({
-        id: 'it_' + Date.now(),
-        day,
-        time,
-        place,
-        memo
-      });
+      trip.itineraries.push(scheduleObj);
     }
 
-    currentItineraryDay = day;
-    renderDayChipsBar(trip);
     saveLocalData();
     closeModalSafe('modalAddSchedule');
-    renderItineraryTab(trip);
+    renderDetailView();
     await syncTripToFirestore(trip);
   } catch (err) {
     console.error('일정 저장 오류:', err);

@@ -30,7 +30,8 @@ import {
   AIRPORT_KO_MAP,
   calcDistance,
   compressImageFileToBase64,
-  calculateOneOverNSettlement
+  calculateOneOverNSettlement,
+  resolvePlaceCoordinates
 } from './services.js';
 
 // ============================================================================

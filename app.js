@@ -1407,51 +1407,66 @@ function renderBookingsTab(trip) {
   if (!container) return;
 
   const allBookings = trip.bookings || [];
-  const filtered =
-    currentBookingFilter === '전체'
-      ? allBookings
-      : allBookings.filter((b) => b.category === currentBookingFilter);
+  const filtered = currentBookingFilter === '전체' ? allBookings : allBookings.filter((b) => b.category === currentBookingFilter);
 
   if (filtered.length === 0) {
-    container.innerHTML = `
-      <div class="py-12 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
-        <i class="fa-solid fa-ticket text-2xl mb-1.5 text-slate-300"></i>
-        <p class="text-xs">등록된 예약 내역이 없습니다.</p>
-      </div>
-    `;
+    container.innerHTML = `<div class="py-12 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
+      <i class="fa-solid fa-ticket text-2xl mb-1.5 text-slate-300"></i>
+      <p class="text-xs">등록된 예약 내역이 없습니다.</p>
+    </div>`;
     return;
   }
 
-  const badgeColors = {
-    항공: 'bg-sky-100 text-sky-700',
-    숙소: 'bg-indigo-100 text-indigo-700',
-    렌터카: 'bg-amber-100 text-amber-700',
-    '티켓/투어': 'bg-emerald-100 text-emerald-700'
-  };
-
   container.innerHTML = [...filtered].reverse().map((b) => {
-    return `
-      <div class="kinfolk-card p-3.5 rounded-2xl shadow-xs space-y-2">
-        <div class="flex items-start justify-between gap-2">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <span class="text-[10px] font-extrabold px-2 py-0.5 rounded kinfolk-badge">${escapeHtml(b.category)}</span>
-              <span class="text-[11px] font-semibold text-[var(--kinfolk-text-sub)]">${escapeHtml(b.date || '')} ${escapeHtml(b.time || '')}</span>
-            </div>
-            <h4 class="text-sm font-extrabold text-[var(--kinfolk-text-main)] mt-1 truncate">${escapeHtml(b.title)}</h4>
+    const codeBadge = b.code
+      ? `<span class="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-[var(--kinfolk-subtle)] text-[var(--kinfolk-primary)] border border-[var(--kinfolk-border)]">PNR ${escapeHtml(b.code)}</span>`
+      : '';
+
+    const amountBadge = Number(b.amount) > 0
+      ? `<span class="text-[11px] font-extrabold text-[var(--kinfolk-primary)]">${Number(b.amount).toLocaleString()} ${escapeHtml(b.currency || trip.baseCurrency || 'KRW')}</span>`
+      : '';
+
+    const extraLines = [];
+    if (b.category === '숙소' && b.hotel?.checkOutDate) {
+      extraLines.push(`체크아웃: ${b.hotel.checkOutDate} ${b.hotel.checkOutTime || ''}`.trim());
+    } else if (b.category === '렌터카' && b.rental?.returnDate) {
+      const routeInfo = b.rental.isDifferentDropoff
+        ? `${b.rental.pickupPlace || ''} ➔ ${b.rental.returnPlace || ''}`
+        : (b.rental.pickupPlace || '');
+      extraLines.push(`반납: ${b.rental.returnDate} ${b.rental.returnTime || ''}${routeInfo ? ` (${routeInfo})` : ''}`.trim());
+    }
+    if (b.memo) {
+      extraLines.push(b.memo);
+    }
+
+    const summaryFooterHtml = (amountBadge || extraLines.length > 0)
+      ? `<div class="pt-2 border-t border-[var(--kinfolk-border)] flex items-center justify-between gap-2 text-xs text-[var(--kinfolk-text-sub)]">
+          <p class="min-w-0 flex-1 truncate">${escapeHtml(extraLines.join(' · ') || '상세 메모 없음')}</p>
+          ${amountBadge ? `<div class="shrink-0">${amountBadge}</div>` : ''}
+        </div>`
+      : '';
+
+    return `<div class="kinfolk-card p-3.5 rounded-2xl shadow-xs space-y-2">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-[10px] font-extrabold px-2 py-0.5 rounded kinfolk-badge">${escapeHtml(b.category)}</span>
+            ${codeBadge}
+            <span class="text-[11px] font-semibold text-[var(--kinfolk-text-sub)]">${escapeHtml(b.date || '')} ${escapeHtml(b.time || '')}</span>
           </div>
-          <div class="flex items-center gap-0.5 shrink-0">
-            <button type="button" data-action="edit-booking" data-id="${escapeHtml(b.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-[var(--kinfolk-primary)] transition" title="예약 수정">
-              <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
-            </button>
-            <button type="button" data-action="delete-booking" data-id="${escapeHtml(b.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="예약 삭제">
-              <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
-            </button>
-          </div>
+          <h4 class="text-sm font-extrabold text-[var(--kinfolk-text-main)] mt-1 truncate">${escapeHtml(b.title)}</h4>
         </div>
-        ...
+        <div class="flex items-center gap-0.5 shrink-0">
+          <button type="button" data-action="edit-booking" data-id="${escapeHtml(b.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-[var(--kinfolk-primary)] transition" title="예약 수정">
+            <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
+          </button>
+          <button type="button" data-action="delete-booking" data-id="${escapeHtml(b.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="예약 삭제">
+            <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
+          </button>
+        </div>
       </div>
-    `;
+      ${summaryFooterHtml}
+    </div>`;
   }).join('');
 }
 

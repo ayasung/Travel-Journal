@@ -663,6 +663,56 @@
           <label class="text-xs font-semibold text-[#5C5349] block mb-1">이동 수단 및 메모</label>
           <input id="inputModalScheduleMemo" type="text" placeholder="예: 무료 셔틀버스 탑승" class="touch-target w-full kinfolk-input rounded-xl px-3 text-xs font-medium outline-none" />
         </div>
+
+        <!-- [추가] 일정 -> 지출·예약 연동 옵션 -->
+        <div class="bg-[#F4EFEA] border border-[#EAE3D9] rounded-xl p-3 space-y-2.5">
+          <label class="flex items-center gap-2 text-xs font-extrabold text-[#2C2621] cursor-pointer">
+            <input id="chkScheduleSyncExpense" type="checkbox" class="w-4 h-4 rounded border-[#EAE3D9] text-[#8C7A6B]" />
+            <span>지출/정산 내역에도 함께 반영</span>
+          </label>
+
+          <div id="scheduleExpenseFieldsBox" class="hidden space-y-2 pt-1">
+            <div class="grid grid-cols-3 gap-2">
+              <select id="selectScheduleExpCurrency" class="touch-target bg-white border border-[#EAE3D9] rounded-xl px-2 text-xs font-extrabold outline-none"></select>
+              <input id="inputScheduleExpAmount" type="number" step="any" min="0" placeholder="비용 금액" class="touch-target col-span-2 bg-white border border-[#EAE3D9] rounded-xl px-3 text-xs font-bold outline-none" />
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-[#5C5349] block mb-1">결제자</label>
+              <select id="selectScheduleExpPayer" class="touch-target w-full bg-white border border-[#EAE3D9] rounded-xl px-3 text-xs font-bold outline-none"></select>
+            </div>
+            <div>
+              <span class="text-[11px] font-semibold text-[#5C5349] block mb-1">분담 인원 (1/N)</span>
+              <div id="scheduleExpParticipantsGroup" class="flex flex-wrap gap-1.5"></div>
+            </div>
+          </div>
+
+          <label class="flex items-center gap-2 text-xs font-extrabold text-[#2C2621] cursor-pointer pt-1 border-t border-[#EAE3D9]">
+            <input id="chkScheduleSyncBooking" type="checkbox" class="w-4 h-4 rounded border-[#EAE3D9] text-[#8C7A6B]" />
+            <span>예약 내역에도 함께 등록</span>
+          </label>
+
+          <div id="scheduleBookingFieldsBox" class="hidden grid grid-cols-2 gap-2 pt-1">
+            <div>
+              <label class="text-[11px] font-semibold text-[#5C5349] block mb-1">예약 구분</label>
+              <select id="selectScheduleBookingCategory" class="touch-target w-full bg-white border border-[#EAE3D9] rounded-xl px-2.5 text-xs font-bold outline-none">
+                <option value="티켓/투어">티켓/투어</option>
+                <option value="숙소">숙소</option>
+                <option value="렌터카">렌터카</option>
+                <option value="항공">항공</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[11px] font-semibold text-[#5C5349] block mb-1">예약번호 / PNR</label>
+              <input id="inputScheduleBookingCode" type="text" placeholder="선택 입력" class="touch-target w-full uppercase font-mono bg-white border border-[#EAE3D9] rounded-xl px-2.5 text-xs font-bold outline-none" />
+            </div>
+          </div>
+
+          <label id="scheduleUpdateLinkedOptionRow" class="hidden items-center gap-2 text-[11px] font-bold text-[#5C5349] cursor-pointer pt-1 border-t border-[#EAE3D9]">
+            <input id="chkScheduleUpdateLinkedItems" type="checkbox" checked class="w-3.5 h-3.5 rounded border-[#EAE3D9] text-[#8C7A6B]" />
+            <span>연결된 예약/지출 내역도 함께 갱신</span>
+          </label>
+        </div>
+
         <div class="pt-2 flex justify-end gap-2">
           <button type="button" data-close-modal="modalAddSchedule" class="touch-target px-4 rounded-xl text-xs font-semibold text-[#5C5349] bg-[#EAE3D9]">취소</button>
           <button id="btnSubmitCreateSchedule" type="submit" class="touch-target px-5 rounded-xl text-xs font-extrabold text-white kinfolk-btn-primary">저장</button>

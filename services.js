@@ -386,33 +386,40 @@ export async function resolvePlaceCoordinates(placeName, destinationHint = '') {
   if (PLACE_COORDS_CACHE[scopedKey]) return PLACE_COORDS_CACHE[scopedKey];
   if (PLACE_COORDS_CACHE[compactRaw]) return PLACE_COORDS_CACHE[compactRaw];
 
-  try {
-    const queryWithHint =
-      destinationHint && !rawPlace.includes(destinationHint)
-        ? `${rawPlace} ${destinationHint}`
-        : rawPlace;
-    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(queryWithHint)}`;
-    const res = await fetch(url, { headers: { 'Accept-Language': 'ko,en' } });
-    if (res.ok) {
-      const list = await res.json();
-      if (Array.isArray(list) && list.length > 0 && list[0].lat && list[0].lon) {
-        const found = {
-          lat: parseFloat(list[0].lat),
-          lng: parseFloat(list[0].lon),
-          displayName: rawPlace
-        };
-        if (!Number.isNaN(found.lat) && !Number.isNaN(found.lng)) {
-          PLACE_COORDS_CACHE[scopedKey] = found;
-          PLACE_COORDS_CACHE[compactRaw] = found;
-          savePlaceCoordToLocalStorage(scopedKey, found);
-          return found;
+  const candidateQueries = [];
+  if (destinationHint && !rawPlace.includes(destinationHint)) {
+    candidateQueries.push(`${rawPlace} ${destinationHint}`);
+  }
+  candidateQueries.push(rawPlace);
+
+  for (let qIdx = 0; qIdx < candidateQueries.length; qIdx++) {
+    const queryStr = candidateQueries[qIdx];
+    try {
+      if (qIdx > 0) {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(queryStr)}`;
+      const res = await fetch(url, { headers: { 'Accept-Language': 'ko,en' } });
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list) && list.length > 0 && list[0].lat && list[0].lon) {
+          const found = {
+            lat: parseFloat(list[0].lat),
+            lng: parseFloat(list[0].lon),
+            displayName: rawPlace
+          };
+          if (!Number.isNaN(found.lat) && !Number.isNaN(found.lng)) {
+            PLACE_COORDS_CACHE[scopedKey] = found;
+            PLACE_COORDS_CACHE[compactRaw] = found;
+            savePlaceCoordToLocalStorage(scopedKey, found);
+            return found;
+          }
         }
       }
+    } catch (err) {
+      console.warn('장소 좌표 검색 실패:', queryStr, err);
     }
-  } catch (err) {
-    console.warn('장소 좌표 검색 실패:', rawPlace, err);
   }
-
   return null;
 }
 

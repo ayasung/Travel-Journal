@@ -1179,6 +1179,16 @@ function extractCleanPlaceForRoute(rawPlaceStr) {
   const raw = String(rawPlaceStr || '').trim();
   if (!raw) return '';
 
+  // 1. 렌터카 자동 연동 일정("[렌터카 대여] 예약명 (실제장소)" 등)에서 괄호 안 실제 대여/반납 장소만 추출
+  if (/^\[렌터카\s*(대여|반납)\]/.test(raw)) {
+    const parenMatches = raw.match(/\(([^()]+)\)/g);
+    if (parenMatches && parenMatches.length > 0) {
+      const lastPlace = parenMatches[parenMatches.length - 1].replace(/[()]/g, '').trim();
+      if (lastPlace) return lastPlace;
+    }
+  }
+
+  // 2. 항공 구간("출발 ➔ 도착") 처리
   if (raw.includes('➔') || raw.includes('->') || raw.includes('→')) {
     const parts = raw.split(/➔|->|→/);
     const arrivalPart = (parts[parts.length - 1] || '').trim();
@@ -1208,6 +1218,7 @@ function extractCleanPlaceForRoute(rawPlaceStr) {
     }
   }
 
+  // 3. 일반 및 기타 예약 연동 일정("[숙소 체크인] ", "[티켓/투어] " 등) 대괄호 접두어 정상 제거
   let clean = raw
     .replace(/^\[.*?\]\s*/, '')
     .replace(/\b[A-Z]{2}\d{3,4}\b/gi, '')

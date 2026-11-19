@@ -1407,7 +1407,10 @@ function renderBookingsTab(trip) {
   if (!container) return;
 
   const allBookings = trip.bookings || [];
-  const filtered = currentBookingFilter === '전체' ? allBookings : allBookings.filter((b) => b.category === currentBookingFilter);
+  const filtered =
+    currentBookingFilter === '전체'
+      ? allBookings
+      : allBookings.filter((b) => normalizeBookingCat(b.category) === currentBookingFilter);
 
   if (filtered.length === 0) {
     container.innerHTML = `<div class="py-12 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
@@ -1999,7 +2002,12 @@ function renderBookingDynamicFields(category, existingData = null) {
     if (flightMultiBox) flightMultiBox.classList.toggle('hidden', category !== '항공');
     if (hotelStayBox) hotelStayBox.classList.toggle('hidden', category !== '숙소');
     if (rentalCarBox) rentalCarBox.classList.toggle('hidden', category !== '렌터카');
-    if (standardDateBox) standardDateBox.classList.toggle('hidden', category === '항공' || category === '숙소' || category === '렌터카');
+    if (standardDateBox) {
+      standardDateBox.classList.toggle(
+        'hidden',
+        category === '항공' || category === '숙소' || category === '렌터카'
+      );
+    }
 
     if (category === '항공') {
       const segContainer = $('flightSegmentsContainer') || $('flightSegmentsListContainer');

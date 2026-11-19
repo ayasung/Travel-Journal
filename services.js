@@ -376,6 +376,33 @@ function savePlaceCoordToLocalStorage(cacheKey, coordObj) {
 
 loadSavedPlaceCoordsToCache();
 
+function buildCandidateSearchQueries(rawPlace, destinationHint = '') {
+  const queries = [];
+  const pushUnique = (q) => {
+    const trimmed = String(q || '').trim();
+    if (trimmed && !queries.includes(trimmed)) {
+      queries.push(trimmed);
+    }
+  };
+
+  // 1순위: 여행지 힌트 결합 검색 / 원본 검색
+  if (destinationHint && !rawPlace.includes(destinationHint)) {
+    pushUnique(`${rawPlace} ${destinationHint}`);
+  }
+  pushUnique(rawPlace);
+
+  // 2순위: 공백으로 이어진 복합 명칭의 첫 토큰(예: "大山展望の赤橋 夕日大山" -> "大山展望の赤橋")
+  const spaceParts = rawPlace.split(/\s+/).filter(Boolean);
+  if (spaceParts.length > 1) {
+    pushUnique(spaceParts[0]);
+    if (destinationHint && !spaceParts[0].includes(destinationHint)) {
+      pushUnique(`${spaceParts[0]} ${destinationHint}`);
+    }
+  }
+
+  return queries;
+}
+
 export async function resolvePlaceCoordinates(placeName, destinationHint = '') {
   const rawPlace = String(placeName || '').trim();
   if (!rawPlace) return null;
@@ -386,11 +413,7 @@ export async function resolvePlaceCoordinates(placeName, destinationHint = '') {
   if (PLACE_COORDS_CACHE[scopedKey]) return PLACE_COORDS_CACHE[scopedKey];
   if (PLACE_COORDS_CACHE[compactRaw]) return PLACE_COORDS_CACHE[compactRaw];
 
-  const candidateQueries = [];
-  if (destinationHint && !rawPlace.includes(destinationHint)) {
-    candidateQueries.push(`${rawPlace} ${destinationHint}`);
-  }
-  candidateQueries.push(rawPlace);
+  const candidateQueries = buildCandidateSearchQueries(rawPlace, destinationHint);
 
   for (let qIdx = 0; qIdx < candidateQueries.length; qIdx++) {
     const queryStr = candidateQueries[qIdx];
@@ -420,6 +443,7 @@ export async function resolvePlaceCoordinates(placeName, destinationHint = '') {
       console.warn('장소 좌표 검색 실패:', queryStr, err);
     }
   }
+
   return null;
 }
 

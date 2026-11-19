@@ -1810,7 +1810,11 @@ async function openNewTripModal() {
   if ($('inputNewTripTitle')) $('inputNewTripTitle').value = '';
   if ($('inputNewTripDestination')) $('inputNewTripDestination').value = '';
   if ($('inputNewTripStartDate')) $('inputNewTripStartDate').value = today;
-  if ($('inputNewTripEndDate')) $('inputNewTripEndDate').value = today;
+  if ($('inputNewTripEndDate')) {
+    $('inputNewTripEndDate').min = today;
+    $('inputNewTripEndDate').value = today;
+  }
+
   
   // 기본 통화 셀렉트박스 세팅 (KRW 기본, 통화 추가 포함)
   const newTripCurrencySelect = $('selectNewTripCurrency');
@@ -1833,7 +1837,10 @@ function openEditTripInfoModal() {
   if ($('inputEditTripTitle')) $('inputEditTripTitle').value = trip.title || '';
   if ($('inputEditTripDestination')) $('inputEditTripDestination').value = trip.destination || '';
   if ($('inputEditTripStartDate')) $('inputEditTripStartDate').value = trip.startDate || '';
-  if ($('inputEditTripEndDate')) $('inputEditTripEndDate').value = trip.endDate || '';
+  if ($('inputEditTripEndDate')) {
+    $('inputEditTripEndDate').min = trip.startDate || '';
+    $('inputEditTripEndDate').value = trip.endDate || '';
+  }
   
   // [보완] 추가된 커스텀 통화 목록이 누락되지 않도록 반영
   const editCurrSelect = $('selectEditTripCurrency');
@@ -2857,6 +2864,31 @@ document.body.addEventListener('change', async (e) => {
     // tripForSelect 변수는 함수 내에서 딱 한 번만 선언합니다.
     const tripForSelect = getActiveTrip();
 
+    if (target.id === 'inputNewTripStartDate') {
+      const startVal = target.value;
+      const endEl = $('inputNewTripEndDate');
+      if (endEl && startVal) {
+        endEl.min = startVal;
+        if (endEl.value && endEl.value < startVal) {
+          endEl.value = startVal;
+        }
+      }
+      return;
+    }
+    
+    if (target.id === 'inputEditTripStartDate') {
+      const startVal = target.value;
+      const endEl = $('inputEditTripEndDate');
+      if (endEl && startVal) {
+        endEl.min = startVal;
+        if (endEl.value && endEl.value < startVal) {
+          endEl.value = startVal;
+        }
+      }
+      return;
+    }
+
+
     // 새 여행 만들기 통화 선택 및 '통화 추가' 버튼 메뉴 모달 연동
     if (target.id === 'selectNewTripCurrency') {
       if (target.value === 'ADD_CUSTOM_CURRENCY') {
@@ -3186,6 +3218,14 @@ function bindDynamicModalForms() {
       const destination = ($('inputEditTripDestination')?.value || '').trim() || trip.destination;
       const startDate = $('inputEditTripStartDate')?.value || trip.startDate;
       const endDate = $('inputEditTripEndDate')?.value || startDate;
+      if (startDate && endDate && endDate < startDate) {
+        alert('여행 종료 날짜는 시작 날짜보다 앞설 수 없습니다.');
+        if ($('inputEditTripEndDate')) {
+          $('inputEditTripEndDate').min = startDate;
+          $('inputEditTripEndDate').value = startDate;
+        }
+        return;
+      }
       const baseCurrency = ($('selectEditTripCurrency')?.value || trip.baseCurrency || 'KRW').toUpperCase();
       const headcount = Math.max(1, Number($('inputEditTripHeadcount')?.value) || 1);
       const rawMembers = $('inputEditTripMembers')?.value || '나';

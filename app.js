@@ -1231,7 +1231,7 @@ function extractCleanPlaceForRoute(rawPlaceStr) {
   return clean || raw;
 }
 
-function renderRouteMapAndLinks(trip, dayItems) {
+async function renderRouteMapAndLinks(trip, dayItems) {
   try {
     const mapContainer = $('leafletRouteMapContainer');
     const linksContainer = $('localRouteLinksList');
@@ -1246,30 +1246,6 @@ function renderRouteMapAndLinks(trip, dayItems) {
       })
       .filter((s) => Boolean(s.cleanPlace));
 
-    const matchedAirports = [];
-    (dayItems || []).forEach((it) => {
-      const codes = String(it.place || '').toUpperCase().match(/\b[A-Z]{3}\b/g) || [];
-      codes.forEach((code) => {
-        if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[code] && !matchedAirports.find((a) => a.code === code)) {
-          matchedAirports.push({ code, ...AIRPORT_KO_MAP[code] });
-        }
-      });
-    });
-
-    if (matchedAirports.length === 0) {
-      (trip.bookings || []).forEach((bk) => {
-        if (bk.category === '항공') {
-          const bText = `${bk.title || ''} ${bk.memo || ''} ${JSON.stringify(bk.segments || [])}`.toUpperCase();
-          const bCodes = bText.match(/\b[A-Z]{3}\b/g) || [];
-          bCodes.forEach((code) => {
-            if (AIRPORT_KO_MAP && AIRPORT_KO_MAP[code] && !matchedAirports.find((a) => a.code === code)) {
-              matchedAirports.push({ code, ...AIRPORT_KO_MAP[code] });
-            }
-          });
-        }
-      });
-    }
-
     if (mapContainer && window.L) {
       if (!leafletMap) {
         leafletMap = window.L.map(mapContainer).setView([35.4922, 133.2364], 6);
@@ -1280,23 +1256,62 @@ function renderRouteMapAndLinks(trip, dayItems) {
       }
 
       leafletLayerGroup.clearLayers();
-      const latLngs = [];
+      const orderedCoords = [];
 
-      matchedAirports.forEach((ap) => {
-        if (ap.lat && ap.lng) {
-          const marker = window.L.marker([ap.lat, ap.lng]).bindPopup(`✈️ ${ap.name} (${ap.code})`);
-          leafletLayerGroup.addLayer(marker);
-          latLngs.push([ap.lat, ap.lng]);
+      for (let i = 0; i < localStops.length; i++) {
+        const stop = localStops[i];
+        const queryText = stop.cleanPlace;
+        let coords = null;
+
+        const upperQuery = queryText.toUpperCase();
+        const matchedAp = Object.entries(AIRPORT_KO_MAP || {}).find(
+          ([code, info]) => upperQuery.includes(code) || queryText.includes(info.name)
+        );
+        if (matchedAp && matchedAp[1]?.lat && matchedAp[1]?.lng) {
+          coords = {
+            lat: matchedAp[1].lat,
+            lng: matchedAp[1].lng,
+            label: `${matchedAp[1].name} (${matchedAp[0]})`
+          };
+        } else if (typeof resolvePlaceCoordinates === 'function') {
+          const resolved = await resolvePlaceCoordinates(queryText, trip?.destination || '');
+          if (resolved && typeof resolved.lat === 'number' && typeof resolved.lng === 'number') {
+            coords = {
+              lat: resolved.lat,
+              lng: resolved.lng,
+              label: resolved.displayName || queryText
+            };
+          }
         }
-      });
 
-      if (latLngs.length > 1) {
-        const poly = window.L.polyline(latLngs, { color: '#0284c7', weight: 3, dashArray: '5, 5' });
+        if (coords && !Number.isNaN(coords.lat) && !Number.isNaN(coords.lng)) {
+          const orderNum = orderedCoords.length + 1;
+          const numberedIcon = window.L.divIcon({
+            className: 'custom-order-pin',
+            html: `<div style="width:24px;height:24px;border-radius:9999px;background:#8C7A6B;color:#fff;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;border:2px solid #FFFDF9;box-shadow:0 1px 4px rgba(0,0,0,0.25);">${orderNum}</div>`,
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+          });
+
+          const marker = window.L.marker([coords.lat, coords.lng], { icon: numberedIcon }).bindPopup(
+            `<strong>${orderNum}. ${escapeHtml(coords.label)}</strong>${stop.time ? `<br/><span>${escapeHtml(stop.time)}</span>` : ''}`
+          );
+          leafletLayerGroup.addLayer(marker);
+          orderedCoords.push([coords.lat, coords.lng]);
+        }
+      }
+
+      if (orderedCoords.length > 1) {
+        const poly = window.L.polyline(orderedCoords, { color: '#8C7A6B', weight: 3, dashArray: '5, 5' });
         leafletLayerGroup.addLayer(poly);
         leafletMap.fitBounds(poly.getBounds(), { padding: [20, 20] });
-      } else if (latLngs.length === 1) {
-        leafletMap.setView(latLngs[0], 10);
+      } else if (orderedCoords.length === 1) {
+        leafletMap.setView(orderedCoords[0], 12);
       }
+
+      setTimeout(() => {
+        if (leafletMap) leafletMap.invalidateSize();
+      }, 50);
     }
 
     if (linksContainer) {

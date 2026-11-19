@@ -317,6 +317,8 @@ export async function lookupFlightWithAirLabs(flightCodeInput) {
 
 export const lookupFlightInfo = lookupFlightWithAirLabs;
 
+const STORAGE_PLACE_COORDS_KEY = 'TJ_PLACE_COORDS_CACHE_V1';
+
 const PLACE_COORDS_CACHE = {
   인천국제공항: { lat: 37.4602, lng: 126.4407, displayName: '인천국제공항 (ICN)' },
   김포국제공항: { lat: 37.5583, lng: 126.7906, displayName: '김포국제공항 (GMP)' },
@@ -338,53 +340,84 @@ const PLACE_COORDS_CACHE = {
   하카타역: { lat: 33.5902, lng: 130.4207, displayName: '후쿠오카 하카타역' }
 };
 
-export async function geocodePlace(placeQuery) {
-  const clean = String(placeQuery || '').trim();
-  if (!clean) return null;
+function normalizePlaceCacheKey(placeName, destinationHint = '') {
+  const cleanPlace = String(placeName || '').replace(/\s+/g, '').toLowerCase();
+  const cleanDest = String(destinationHint || '').replace(/\s+/g, '').toLowerCase();
+  return cleanDest && !cleanPlace.includes(cleanDest) ? `${cleanDest}::${cleanPlace}` : cleanPlace;
+}
 
-  const upper = clean.toUpperCase();
-  const codeMatches = upper.match(/\b[A-Z]{3}\b/g) || [];
-  for (const code of codeMatches) {
-    if (AIRPORT_KO_MAP[code]) {
-      const ap = AIRPORT_KO_MAP[code];
-      return {
-        lat: ap.lat,
-        lng: ap.lng,
-        displayName: `${ap.name} (${code})`
-      };
+function loadSavedPlaceCoordsToCache() {
+  try {
+    const raw = localStorage.getItem(STORAGE_PLACE_COORDS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') {
+      Object.entries(parsed).forEach(([key, val]) => {
+        if (val && typeof val.lat === 'number' && typeof val.lng === 'number') {
+          PLACE_COORDS_CACHE[key] = val;
+        }
+      });
     }
+  } catch (err) {
+    console.warn('저장된 장소 좌표 캐시 불러오기 실패:', err);
   }
+}
 
-  const compactKey = clean.replace(/\s+/g, '');
-  for (const key of Object.keys(PLACE_COORDS_CACHE)) {
-    if (compactKey.includes(key) || key.includes(compactKey)) {
-      return { ...PLACE_COORDS_CACHE[key] };
-    }
+function savePlaceCoordToLocalStorage(cacheKey, coordObj) {
+  try {
+    const raw = localStorage.getItem(STORAGE_PLACE_COORDS_KEY);
+    const saved = raw ? JSON.parse(raw) : {};
+    saved[cacheKey] = coordObj;
+    localStorage.setItem(STORAGE_PLACE_COORDS_KEY, JSON.stringify(saved));
+  } catch (err) {
+    console.warn('장소 좌표 localStorage 저장 실패:', err);
   }
+}
+
+loadSavedPlaceCoordsToCache();
+
+export async function resolvePlaceCoordinates(placeName, destinationHint = '') {
+  const rawPlace = String(placeName || '').trim();
+  if (!rawPlace) return null;
+
+  const compactRaw = rawPlace.replace(/\s+/g, '');
+  const scopedKey = normalizePlaceCacheKey(rawPlace, destinationHint);
+
+  if (PLACE_COORDS_CACHE[scopedKey]) return PLACE_COORDS_CACHE[scopedKey];
+  if (PLACE_COORDS_CACHE[compactRaw]) return PLACE_COORDS_CACHE[compactRaw];
 
   try {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(clean)}`;
-    const res = await fetch(url, {
-      headers: { 'Accept-Language': 'ko,en' }
-    });
+    const queryWithHint =
+      destinationHint && !rawPlace.includes(destinationHint)
+        ? `${rawPlace} ${destinationHint}`
+        : rawPlace;
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(queryWithHint)}`;
+    const res = await fetch(url, { headers: { 'Accept-Language': 'ko,en' } });
     if (res.ok) {
       const list = await res.json();
-      if (Array.isArray(list) && list.length > 0) {
-        const hit = list[0];
-        const coords = {
-          lat: parseFloat(hit.lat),
-          lng: parseFloat(hit.lon),
-          displayName: hit.display_name || clean
+      if (Array.isArray(list) && list.length > 0 && list[0].lat && list[0].lon) {
+        const found = {
+          lat: parseFloat(list[0].lat),
+          lng: parseFloat(list[0].lon),
+          displayName: rawPlace
         };
-        PLACE_COORDS_CACHE[compactKey] = coords;
-        return coords;
+        if (!Number.isNaN(found.lat) && !Number.isNaN(found.lng)) {
+          PLACE_COORDS_CACHE[scopedKey] = found;
+          PLACE_COORDS_CACHE[compactRaw] = found;
+          savePlaceCoordToLocalStorage(scopedKey, found);
+          return found;
+        }
       }
     }
   } catch (err) {
-    console.warn(`장소 좌표 변환 실패 (${clean}):`, err);
+    console.warn('장소 좌표 검색 실패:', rawPlace, err);
   }
 
   return null;
+}
+
+export async function geocodePlace(placeQuery) {
+  return resolvePlaceCoordinates(placeQuery, '');
 }
 
 export function calcDistance(lat1, lng1, lat2, lng2) {

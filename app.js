@@ -933,13 +933,14 @@ function renderHomeView() {
   if ($('homeTripCountLabel')) $('homeTripCountLabel').textContent = String(trips.length);
 
   if (trips.length === 0) {
+    // [교체 1-A] 빈 여행 목록 안내 카드: 종이·잉크 톤 및 선형 아이콘 적용
     container.innerHTML = `
-      <div class="py-10 px-4 text-center bg-white rounded-2xl border border-dashed border-slate-200 space-y-2">
-        <div class="w-11 h-11 rounded-2xl bg-sky-50 text-sky-600 flex items-center justify-center mx-auto">
-          <i class="fa-solid fa-suitcase-rolling text-lg"></i>
+      <div class="py-10 px-4 text-center bg-[var(--paper-surface)] rounded-[12px] border border-dashed border-[var(--paper-border)] space-y-2">
+        <div class="w-11 h-11 rounded-[12px] bg-[var(--paper-card-alt)] text-[var(--ink-primary)] border border-[var(--paper-border)] flex items-center justify-center mx-auto">
+          <i data-lucide="book-open" class="line-icon"></i>
         </div>
-        <p class="text-xs font-extrabold text-slate-700">등록된 여행이 없습니다.</p>
-        <p class="text-[11px] text-slate-400">상단의 [새 여행 만들기] 버튼으로 첫 여행을 시작해 보세요!</p>
+        <p class="text-xs font-bold text-[var(--ink-primary)]">등록된 여행이 없습니다.</p>
+        <p class="text-[11px] text-[var(--ink-secondary)]">상단의 [+ 새 여행 만들기] 버튼으로 첫 여행을 시작해 보세요!</p>
       </div>
     `;
   } else {
@@ -947,45 +948,63 @@ function renderHomeView() {
       .map((trip) => {
         const members = Array.isArray(trip.members) ? trip.members : ['나'];
         const claimed = trip.claimedMembers || {};
+        const stampCount = Array.isArray(trip.itineraries)
+          ? trip.itineraries.filter((it) => Boolean(it && (it.stamped || it.visited || it.completed))).length
+          : 0;
+        const recordCount =
+          (Array.isArray(trip.itineraries) ? trip.itineraries.length : 0) +
+          (Array.isArray(trip.bookings) ? trip.bookings.length : 0) +
+          (Array.isArray(trip.expenses) ? trip.expenses.length : 0) +
+          (Array.isArray(trip.photos) ? trip.photos.length : 0) +
+          (Array.isArray(trip.reviews) ? trip.reviews.length : 0);
 
-        // [요구사항 1] 텍스트 없이 컬러 점(초록/회색)만으로 인원 참여 상태 직관적 표시
+        // [교체 1-B] 참여자 상태 배지: 세이지 올리브 / 샌드 베이지 잉크 톤 유지
         const memberTags = members
           .map((m, idx) => {
             const isClaimed = idx === 0 || Boolean(claimed[m]);
             return `
-              <span class="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-md font-bold ${
+              <span class="inline-flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-[8px] font-semibold border ${
                 isClaimed
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : 'bg-slate-100 text-slate-500 border border-slate-200'
+                  ? 'bg-[var(--paper-card-alt)] text-[var(--stamp-olive)] border-[var(--paper-border)]'
+                  : 'bg-[var(--paper-bg)] text-[var(--ink-secondary)] border-[var(--paper-border)]'
               }" title="${escapeHtml(m)} (${isClaimed ? '참여 완료' : '대기 중'})">
-                <span class="w-2 h-2 rounded-full ${isClaimed ? 'bg-emerald-500' : 'bg-slate-400'}"></span>
+                <span class="w-2 h-2 rounded-full ${isClaimed ? 'bg-[var(--stamp-olive)]' : 'bg-[var(--ink-muted)]'}"></span>
                 ${escapeHtml(m)}
               </span>
             `;
           })
           .join('');
 
+        // [교체 1-C] 여행 카드: 코튼 페이퍼 표면, 에디토리얼 제목, 모노스페이스 숫자, 선형 아이콘 적용
         return `
-          <div data-action="open-trip" data-trip-id="${escapeHtml(trip.id)}" class="kinfolk-card rounded-2xl p-4 shadow-xs hover:border-[var(--kinfolk-primary)] active:scale-[0.99] transition cursor-pointer space-y-2.5">
+          <div data-action="open-trip" data-trip-id="${escapeHtml(trip.id)}" class="bg-[var(--paper-surface)] rounded-[12px] p-4 border border-[var(--paper-border)] hover:border-[var(--ink-primary)] active:scale-[0.99] transition cursor-pointer space-y-2.5">
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0 flex-1">
-                <div class="flex items-center gap-1.5 mb-1">
-                  <span class="text-[10px] font-mono font-bold text-[var(--kinfolk-primary)] bg-[var(--kinfolk-subtle)] border border-[var(--kinfolk-border)] px-2 py-0.5 rounded">${escapeHtml(trip.inviteCode)}</span>
-                  <span class="text-[10px] font-bold text-[var(--kinfolk-text-sub)] bg-[var(--kinfolk-subtle)] px-2 py-0.5 rounded">${escapeHtml(trip.destination)}</span>
+                <div class="flex items-center gap-1.5 mb-1 flex-wrap">
+                  <span class="mono-num text-[10px] font-bold text-[var(--stamp-blue)] bg-[var(--paper-card-alt)] border border-[var(--paper-border)] px-2 py-0.5 rounded-[8px]">${escapeHtml(trip.inviteCode)}</span>
+                  <span class="text-[10px] font-semibold text-[var(--ink-secondary)] bg-[var(--paper-bg)] border border-[var(--paper-border)] px-2 py-0.5 rounded-[8px]">${escapeHtml(trip.destination)}</span>
+                  <span class="mono-num text-[10px] font-bold text-[var(--stamp-red)] bg-[var(--paper-bg)] border border-[var(--paper-border)] px-2 py-0.5 rounded-[8px]">스탬프 ${stampCount}</span>
+                  <span class="mono-num text-[10px] font-semibold text-[var(--ink-secondary)] bg-[var(--paper-bg)] border border-[var(--paper-border)] px-2 py-0.5 rounded-[8px]">기록 ${recordCount}</span>
                 </div>
-                <h4 class="text-sm font-extrabold text-[var(--kinfolk-text-main)] truncate">${escapeHtml(trip.title)}</h4>
-                <p class="text-xs text-[var(--kinfolk-text-sub)] mt-0.5">${escapeHtml(trip.startDate)} ~ ${escapeHtml(trip.endDate)}</p>
+                <h4 class="editorial-title text-xl font-semibold text-[var(--ink-primary)] truncate">${escapeHtml(trip.title)}</h4>
+                <p class="mono-num text-xs text-[var(--ink-secondary)] mt-0.5">${escapeHtml(trip.startDate)} ~ ${escapeHtml(trip.endDate)}</p>
               </div>
-              <button type="button" data-action="delete-trip" data-trip-id="${escapeHtml(trip.id)}" class="touch-target flex items-center justify-center rounded-xl text-slate-300 hover:text-rose-500 hover:bg-rose-50 transition shrink-0" title="여행 삭제">
-                <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
+              <button type="button" data-action="delete-trip" data-trip-id="${escapeHtml(trip.id)}" class="touch-target flex items-center justify-center rounded-[10px] text-[var(--ink-secondary)] hover:text-[var(--stamp-red)] hover:bg-[var(--paper-card-alt)] transition shrink-0" title="여행 삭제">
+                <i data-lucide="trash-2" class="line-icon-sm pointer-events-none"></i>
               </button>
             </div>
-            <div class="flex items-center justify-between pt-2 border-t border-[var(--kinfolk-border)]">
+            <div class="flex items-center justify-between pt-2 border-t border-[var(--paper-border)] gap-2">
               <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-[11px] text-[var(--kinfolk-text-sub)] font-bold mr-1"><i class="fa-solid fa-users text-[10px] text-[var(--kinfolk-primary)] mr-1"></i>정원 ${members.length}명</span>
+                <span class="mono-num text-[11px] text-[var(--ink-secondary)] font-semibold inline-flex items-center gap-1 mr-1">
+                  <i data-lucide="users" class="line-icon-sm text-[var(--stamp-olive)]"></i>
+                  <span>정원 ${members.length}명</span>
+                </span>
                 ${memberTags}
               </div>
-              <span class="text-xs font-extrabold text-[var(--kinfolk-primary)] shrink-0">입장 <i class="fa-solid fa-chevron-right text-[10px]"></i></span>
+              <span class="text-xs font-bold text-[var(--ink-primary)] shrink-0 inline-flex items-center gap-0.5">
+                <span>입장</span>
+                <i data-lucide="chevron-right" class="line-icon-sm"></i>
+              </span>
             </div>
           </div>
         `;
@@ -994,6 +1013,10 @@ function renderHomeView() {
   }
 
   renderHomeArchiveReviews();
+
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+  }
 }
 
 function renderHomeArchiveReviews() {
@@ -1013,8 +1036,13 @@ function renderHomeArchiveReviews() {
 
   if ($('homeAllReviewsCount')) $('homeAllReviewsCount').textContent = String(combinedReviews.length);
   if (combinedReviews.length === 0) {
+    // [교체 2] 빈 리뷰 목록 안내 카드: 종이·잉크 톤 적용
     if ($('homeAllReviewsAvg')) $('homeAllReviewsAvg').textContent = '평균 ★ 0.0';
-    container.innerHTML = `<div class="py-8 px-4 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400"><p class="text-xs">아직 작성된 전체 리뷰가 없습니다. 여행 상세에서 리뷰를 남겨보세요!</p></div>`;
+    container.innerHTML = `
+      <div class="py-8 px-4 text-center bg-[var(--paper-surface)] rounded-[12px] border border-dashed border-[var(--paper-border)] text-[var(--ink-secondary)]">
+        <p class="text-xs">아직 작성된 전체 리뷰가 없습니다. 여행 상세에서 리뷰를 남겨보세요!</p>
+      </div>
+    `;
     return;
   }
 
@@ -1023,35 +1051,40 @@ function renderHomeArchiveReviews() {
   ).toFixed(1);
   if ($('homeAllReviewsAvg')) $('homeAllReviewsAvg').textContent = `평균 ★ ${avgAll}`;
 
+  // [교체 3] 리뷰 아카이브 카드: 코튼 페이퍼 표면, 프러시안 블루/테라코타 잉크 포인트, 선형 아이콘 적용
   container.innerHTML = combinedReviews
     .slice(0, 12)
     .map((rv) => {
       const rating = Number(rv.rating) || 5;
       const stars = '★'.repeat(rating) + '☆'.repeat(5 - rating);
       return `
-        <div class="kinfolk-card p-3.5 rounded-2xl shadow-xs space-y-1.5">
+        <div class="bg-[var(--paper-surface)] p-3.5 rounded-[12px] border border-[var(--paper-border)] space-y-1.5">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-[10px] font-extrabold px-2 py-0.5 rounded bg-sky-50 text-sky-700">${escapeHtml(rv.category || '장소')}</span>
-                ${rv.tripTitle ? `<span class="text-[10px] font-semibold text-slate-400 truncate max-w-[140px]">${escapeHtml(rv.tripTitle)}</span>` : ''}
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-[8px] bg-[var(--paper-card-alt)] text-[var(--stamp-blue)] border border-[var(--paper-border)]">${escapeHtml(rv.category || '장소')}</span>
+                ${rv.tripTitle ? `<span class="text-[10px] font-medium text-[var(--ink-secondary)] truncate max-w-[140px]">${escapeHtml(rv.tripTitle)}</span>` : ''}
               </div>
-              <h4 class="text-xs font-extrabold text-slate-800 mt-1 truncate">${escapeHtml(rv.place)}</h4>
-              <span class="text-[11px] text-amber-500 font-bold">${stars}</span>
+              <h4 class="text-xs font-bold text-[var(--ink-primary)] mt-1 truncate">${escapeHtml(rv.place)}</h4>
+              <span class="mono-num text-[11px] text-[var(--stamp-red)] font-bold">${stars}</span>
             </div>
             ${
               rv.tripId
-                ? `<button type="button" data-action="edit-global-review" data-trip-id="${escapeHtml(rv.tripId)}" data-id="${escapeHtml(rv.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="리뷰 수정">
-                    <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
+                ? `<button type="button" data-action="edit-global-review" data-trip-id="${escapeHtml(rv.tripId)}" data-id="${escapeHtml(rv.id)}" class="touch-target flex items-center justify-center rounded-[10px] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition" title="리뷰 수정">
+                    <i data-lucide="pen-line" class="line-icon-sm pointer-events-none"></i>
                   </button>`
                 : ''
             }
           </div>
-          <p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl line-clamp-2">${escapeHtml(rv.content)}</p>
+          <p class="text-xs text-[var(--ink-secondary)] bg-[var(--paper-bg)] border border-[var(--paper-border)] p-2.5 rounded-[10px] line-clamp-2">${escapeHtml(rv.content)}</p>
         </div>
       `;
     })
     .join('');
+
+  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+    window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+  }
 }
 
 function enterTripDetail(tripId) {

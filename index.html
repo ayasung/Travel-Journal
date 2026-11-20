@@ -253,58 +253,65 @@
        ==================================================================== -->
   <div id="homeView" class="max-w-md mx-auto p-3.5 space-y-2.5 pb-24">
       
+    <!-- ====================================================================
+         2단계: 홈 / 트래블 서재 & 새 여행 만들기 · 초대코드 입력 화면
+         ==================================================================== -->
     <!-- 1. 새 여행 만들기 배너 카드 -->
-    <section class="bg-white rounded-2xl p-4 border border-[#EAE3D9] shadow-2xs space-y-2.5 relative overflow-hidden">
-      <div class="absolute -right-4 -bottom-4 w-24 h-24 rounded-full bg-[#F4EFEA] pointer-events-none opacity-60"></div>
-      <div class="relative z-10 space-y-1">
-        <span class="inline-flex items-center gap-1 text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#F4EFEA] text-[#5C5349] border border-[#EAE3D9]">
-          <i class="fa-solid fa-seedling text-[#8C7A6B]"></i> Travel Journal
+    <section class="bg-[var(--paper-surface)] rounded-[12px] p-4 border border-[var(--paper-border)] space-y-3 relative overflow-hidden">
+      <div class="relative z-10 space-y-1.5">
+        <span class="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-0.5 rounded-[8px] bg-[var(--paper-card-alt)] text-[var(--stamp-olive)] border border-[var(--paper-border)]">
+          <i data-lucide="feather" class="line-icon-sm"></i>
+          <span>Travel Journal</span>
         </span>
-        <h2 class="text-sm font-extrabold text-[#2C2621] tracking-tight">새로운 여정을 시작하세요</h2>
-        <p class="text-[11px] text-[#7A6E63] leading-relaxed">
-          일정, 예약, 실시간 환율 1/N 정산과 추억을 한 곳에서 스마트하게 기록합니다.
+        <h2 class="editorial-title text-2xl font-semibold text-[var(--ink-primary)] leading-tight">새로운 여정을 시작하세요</h2>
+        <p class="text-xs text-[var(--ink-secondary)] leading-relaxed">
+          일정, 예약, 실시간 환율 1/N 정산과 추억을 한 곳에서 차분하게 기록합니다.
         </p>
       </div>
-      <button type="button" data-action="open-new-trip-modal" class="touch-target w-full py-2.5 px-4 rounded-xl bg-[#8C7A6B] hover:bg-[#7A6E63] active:scale-[0.99] text-white text-xs font-extrabold flex items-center justify-center gap-2 transition shadow-xs">
-        <i class="fa-solid fa-plus pointer-events-none"></i>
-        <span class="pointer-events-none">새 여행 만들기</span>
+      <button type="button" data-action="open-new-trip-modal" class="touch-target w-full py-2.5 px-4 rounded-[10px] bg-[var(--ink-primary)] hover:opacity-90 active:scale-[0.99] text-[var(--paper-surface)] text-xs font-bold flex items-center justify-center gap-2 transition">
+        <i data-lucide="plus" class="line-icon-sm"></i>
+        <span class="pointer-events-none">+ 새 여행 만들기</span>
       </button>
     </section>
-  
+    
     <!-- 2. 초대 코드로 참여 입력창 및 버튼 -->
-    <section class="bg-white rounded-2xl p-3.5 border border-[#EAE3D9] shadow-2xs space-y-2">
-      <div class="flex items-center justify-between">
-        <h3 class="text-xs font-extrabold text-[#2C2621] flex items-center gap-1.5">
-          <i class="fa-solid fa-ticket text-[#8C7A6B]"></i>
-          <span>초대 코드로 참여</span>
+    <section class="bg-[var(--paper-surface)] rounded-[12px] p-4 border border-[var(--paper-border)] space-y-2.5">
+      <div class="flex items-center justify-between gap-2">
+        <h3 class="text-xs font-bold text-[var(--ink-primary)] flex items-center gap-1.5">
+          <i data-lucide="ticket" class="line-icon-sm text-[var(--stamp-blue)]"></i>
+          <span>초대코드 입력</span>
         </h3>
-        <span class="text-[10px] text-[#7A6E63]">일행과 공용 데이터 실시간 연동</span>
+        <span class="text-[11px] text-[var(--ink-secondary)]">동행 코드로 여정 합류</span>
       </div>
       <form id="formJoinTripByCode" class="space-y-2">
         <div class="grid grid-cols-5 gap-2">
-          <input id="inputJoinInviteCode" type="text" placeholder="코드 (TR-XXXX)" class="touch-target col-span-5 w-full uppercase font-mono bg-[#FBF9F5] border border-[#EAE3D9] rounded-xl px-3 text-xs font-bold text-[#2C2621] outline-none focus:border-[#8C7A6B] focus:ring-1 focus:ring-[#8C7A6B]" required />
-          <input id="inputJoinUserNickname" type="text" placeholder="내 이름" class="touch-target col-span-2 bg-[#FBF9F5] border border-[#EAE3D9] rounded-xl px-3 text-xs font-medium text-[#2C2621] outline-none focus:border-[#8C7A6B] focus:ring-1 focus:ring-[#8C7A6B] hidden" />
+          <input id="inputJoinInviteCode" type="text" placeholder="코드 (#SJ-8421 / TR-XXXX)" class="touch-target col-span-5 w-full uppercase mono-num bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[10px] px-3 text-xs font-semibold text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] outline-none focus:border-[var(--ink-primary)]" required />
+          <input id="inputJoinUserNickname" type="text" placeholder="내 이름" class="touch-target col-span-2 mono-num bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[10px] px-3 text-xs font-medium text-[var(--ink-primary)] outline-none focus:border-[var(--ink-primary)] hidden" />
         </div>
-        <button id="btnSubmitJoinTrip" type="submit" class="touch-target w-full py-2.5 px-4 rounded-xl bg-[#2C2621] hover:bg-[#1A1613] active:scale-[0.99] text-white text-xs font-extrabold transition">
+        <button id="btnSubmitJoinTrip" type="submit" class="touch-target w-full py-2.5 px-4 rounded-[10px] bg-[var(--paper-card-alt)] hover:bg-[var(--paper-border)] active:scale-[0.99] text-[var(--ink-primary)] border border-[var(--paper-border)] text-xs font-bold transition">
           초대 코드로 여행 합류하기
         </button>
       </form>
     </section>
-  
-    <!-- 3. 내 여행 목록 카드 영역 -->
-    <section class="space-y-2">
+    
+    <!-- 3. 내 여행 목록 (트래블 서재) 카드 영역 -->
+    <section class="space-y-2.5">
       <div class="flex items-center justify-between px-1">
-        <h3 class="text-xs font-extrabold text-[#5C5349]">내 여행 목록 <span id="homeTripCountLabel" class="text-[#8C7A6B] ml-1">0</span></h3>
-        <span id="headerRateTimestamp" class="text-[10px] text-[#7A6E63]">환율 정보 대기 중</span>
+        <h3 class="editorial-title text-lg font-semibold text-[var(--ink-primary)]">
+          트래블 서재 <span id="homeTripCountLabel" class="mono-num text-sm font-bold text-[var(--stamp-olive)] ml-1">0</span>
+        </h3>
+        <span id="headerRateTimestamp" class="mono-num text-[11px] text-[var(--ink-secondary)]">환율 정보 대기 중</span>
       </div>
       <div id="homeTripCardsContainer" class="space-y-2.5"></div>
     </section>
-  
+    
     <!-- 4. 전체 리뷰 아카이브 -->
-    <section id="homeAllReviewsSection" class="space-y-2 pt-1">
+    <section id="homeAllReviewsSection" class="space-y-2.5 pt-1">
       <div class="flex items-center justify-between px-1">
-        <h3 class="text-xs font-extrabold text-[#5C5349]">전체 리뷰 아카이브 <span id="homeAllReviewsCount" class="text-amber-700 ml-1">0</span></h3>
-        <span id="homeAllReviewsAvg" class="text-[11px] font-bold text-amber-700">평균 ★ 0.0</span>
+        <h3 class="editorial-title text-lg font-semibold text-[var(--ink-primary)]">
+          전체 리뷰 아카이브 <span id="homeAllReviewsCount" class="mono-num text-sm font-bold text-[var(--stamp-red)] ml-1">0</span>
+        </h3>
+        <span id="homeAllReviewsAvg" class="mono-num text-xs font-bold text-[var(--stamp-red)]">평균 ★ 0.0</span>
       </div>
       <div id="homeAllReviewsContainer" class="space-y-2"></div>
     </section>

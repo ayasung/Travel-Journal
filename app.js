@@ -2306,22 +2306,22 @@ function renderBookingDynamicFields(category, existingData = null) {
       segContainer.innerHTML = segments
         .map(
           (seg, idx) => `
-          <div class="flight-segment-row bg-white border border-sky-200 rounded-xl p-2.5 space-y-2 relative" data-index="${idx}">
+          <div class="flight-segment-row bg-[var(--paper-surface)] border border-[var(--paper-border)] rounded-[10px] p-2.5 space-y-2 relative" data-index="${idx}">
             <div class="flex items-center justify-between">
-              <span class="text-[11px] font-extrabold text-sky-800">구간 ${idx + 1}</span>
-              ${segments.length > 1 ? '<button type="button" data-action="remove-flight-segment" class="text-rose-500 text-xs px-1 hover:underline">삭제</button>' : ''}
+              <span class="mono-num text-[11px] font-bold text-[var(--stamp-blue)]">SEGMENT ${idx + 1}</span>
+              ${segments.length > 1 ? '<button type="button" data-action="remove-flight-segment" class="text-[var(--stamp-red)] text-xs px-1 hover:underline">삭제</button>' : ''}
             </div>
             <div class="flex gap-1.5">
-              <input type="text" placeholder="편명 (예: RS471)" value="${escapeHtml(seg.flightNo || '')}" class="seg-flight-code touch-target flex-1 uppercase font-mono bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs font-bold outline-none" />
-              <button type="button" data-action="lookup-segment-flight" class="touch-target px-2.5 rounded-lg bg-sky-600 text-white text-xs font-extrabold shrink-0">조회</button>
+              <input type="text" placeholder="편명 (예: RS471)" value="${escapeHtml(seg.flightNo || '')}" class="seg-flight-code mono-num touch-target flex-1 uppercase bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2.5 text-xs font-bold text-[var(--ink-primary)] outline-none" />
+              <button type="button" data-action="lookup-segment-flight" class="touch-target px-2.5 rounded-[8px] bg-[var(--ink-primary)] text-[var(--paper-surface)] text-xs font-bold shrink-0">조회</button>
             </div>
             <div class="grid grid-cols-2 gap-1.5">
-              <input type="date" value="${escapeHtml(seg.date || '')}" class="seg-flight-date touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
-              <input type="time" value="${escapeHtml(seg.time || '10:00')}" class="seg-flight-time touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
+              <input type="date" value="${escapeHtml(seg.date || '')}" class="seg-flight-date mono-num touch-target bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2 text-xs text-[var(--ink-primary)]" />
+              <input type="time" value="${escapeHtml(seg.time || '10:00')}" class="seg-flight-time mono-num touch-target bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2 text-xs text-[var(--ink-primary)]" />
             </div>
             <div class="grid grid-cols-2 gap-1.5">
-              <input type="text" placeholder="출발지" value="${escapeHtml(seg.dep || '')}" class="seg-flight-dep touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
-              <input type="text" placeholder="도착지" value="${escapeHtml(seg.arr || '')}" class="seg-flight-arr touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
+              <input type="text" placeholder="출발지" value="${escapeHtml(seg.dep || '')}" class="seg-flight-dep touch-target bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2 text-xs text-[var(--ink-primary)]" />
+              <input type="text" placeholder="도착지" value="${escapeHtml(seg.arr || '')}" class="seg-flight-arr touch-target bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2 text-xs text-[var(--ink-primary)]" />
             </div>
           </div>
         `
@@ -2342,13 +2342,11 @@ function renderBookingDynamicFields(category, existingData = null) {
       if ($('inputHotelCheckOutTime')) {
         $('inputHotelCheckOutTime').value = existingData?.hotel?.checkOutTime || '11:00';
       }
-      updateHotelStayDurationBadge();
+      if (typeof updateHotelStayDurationBadge === 'function') updateHotelStayDurationBadge();
     } else if (category === '렌터카') {
       const startVal = existingData?.rental?.pickupDate || existingData?.date || trip?.startDate || '';
       const endVal = existingData?.rental?.returnDate || trip?.endDate || startVal;
-      if ($('inputRentalPickupDate')) {
-        $('inputRentalPickupDate').value = startVal;
-      }
+      if ($('inputRentalPickupDate')) $('inputRentalPickupDate').value = startVal;
       if ($('inputRentalReturnDate')) {
         $('inputRentalReturnDate').min = startVal;
         $('inputRentalReturnDate').value = endVal && endVal < startVal ? startVal : endVal;
@@ -2356,7 +2354,7 @@ function renderBookingDynamicFields(category, existingData = null) {
       if ($('inputRentalPickupTime')) $('inputRentalPickupTime').value = existingData?.rental?.pickupTime || '10:00';
       if ($('inputRentalReturnTime')) $('inputRentalReturnTime').value = existingData?.rental?.returnTime || '18:00';
       if ($('inputRentalPickupPlace')) $('inputRentalPickupPlace').value = existingData?.rental?.pickupPlace || trip?.destination || '';
-      
+
       const isDiff = existingData?.rental?.isDifferentDropoff || false;
       const chkDiff = $('chkRentalDifferentDropoff');
       const dropoffWrapper = $('rentalDropoffLocationWrapper');

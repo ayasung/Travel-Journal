@@ -2882,6 +2882,23 @@ document.body.addEventListener('click', async (e) => {
         openAddScheduleModal();
         break;
 
+      // 3) switch (action) 내부에 추가할 러버 스탬프 토글 핸들러
+      case 'toggle-itinerary-stamp': {
+        const trip = getActiveTrip();
+        const item = trip?.itineraries?.find((s) => s.id === id);
+        if (trip && item) {
+          const nextState = !Boolean(item.stamped || item.visited || item.completed);
+          item.stamped = nextState;
+          item.stampedDate = nextState
+            ? (typeof getDateForTripDay === 'function' ? getDateForTripDay(trip, item.day || currentItineraryDay) : new Date().toISOString().split('T')[0])
+            : '';
+          saveLocalData();
+          renderItineraryTab(trip);
+          await syncTripToFirestore(trip);
+        }
+        break;
+      }
+
       case 'edit-itinerary': {
         const trip = getActiveTrip();
         const item = trip?.itineraries?.find((s) => s.id === id);

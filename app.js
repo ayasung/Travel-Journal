@@ -3131,30 +3131,45 @@ document.body.addEventListener('change', async (e) => {
           openModalSafe('modalCurrencySelector');
 
           // 클릭 시 선택한 통화로 드롭다운 값 변경 및 실시간 환율 조회
+          const closeCurrencyModalBtn = document.querySelector('#modalCurrencySelector [data-close-modal]');
+          const handleCloseCurrencyModal = () => {
+            gridContainer.removeEventListener('click', handlePickCurrency);
+            closeModalSafe('modalCurrencySelector');
+            if (target.value === 'ADD_CUSTOM_CURRENCY') {
+              target.value = '';
+            }
+          };
+    
           const handlePickCurrency = async (eClick) => {
             const btn = eClick.target.closest('[data-action="pick-custom-currency"]');
             if (!btn) return;
-            const chosenCode = btn.getAttribute('data-code');
+            const chosenCode = (btn.getAttribute('data-code') || '').trim().toUpperCase();
             gridContainer.removeEventListener('click', handlePickCurrency);
+            if (closeCurrencyModalBtn) closeCurrencyModalBtn.onclick = null;
             closeModalSafe('modalCurrencySelector');
-
+    
             if (chosenCode && chosenCode.length === 3) {
-              let opt = Array.from(target.options).find(o => o.value === chosenCode);
+              let opt = Array.from(target.options).find((o) => o.value === chosenCode);
               if (!opt) {
                 opt = document.createElement('option');
                 opt.value = chosenCode;
-                const found = GLOBAL_CURRENCY_OPTIONS.find(o => o.code === chosenCode);
+                const found = GLOBAL_CURRENCY_OPTIONS.find((o) => o.code === chosenCode);
                 opt.textContent = found ? found.name : `${chosenCode} (기타 통화)`;
                 target.insertBefore(opt, target.lastElementChild);
               }
               target.value = chosenCode;
-              try { await fetchLiveExchangeRate(chosenCode); } catch (e) {}
+              try {
+                await fetchLiveExchangeRate(chosenCode);
+              } catch (e) {}
               alert(`'${chosenCode}' 통화가 기본 통화로 선택되었습니다.`);
             } else {
-              target.value = 'KRW';
+              target.value = '';
             }
           };
-
+    
+          if (closeCurrencyModalBtn) {
+            closeCurrencyModalBtn.onclick = handleCloseCurrencyModal;
+          }
           gridContainer.onclick = null;
           gridContainer.addEventListener('click', handlePickCurrency);
         } else {
@@ -3602,7 +3617,12 @@ $('formCreateNewTrip')?.addEventListener('submit', async (e) => {
     const startDate = $('inputNewTripStartDate')?.value || new Date().toISOString().split('T')[0];
     const endDate = $('inputNewTripEndDate')?.value || startDate;
     
-    const baseCurrency = ($('selectNewTripCurrency')?.value || 'KRW').toUpperCase();
+    const rawCurrency = String($('selectNewTripCurrency')?.value || '').trim().toUpperCase();
+    if (!rawCurrency || rawCurrency === 'ADD_CUSTOM_CURRENCY') {
+      alert('기본 통화를 선택해야 합니다.');
+      return;
+    }
+    const baseCurrency = rawCurrency;
     const myBudget = Number($('inputNewTripMyBudget')?.value) || 0;
 
     // 입력된 닉네임 목록(쉼표 기준)을 파싱하고, 그 개수를 총 인원수(headcount)로 자동 설정

@@ -13,69 +13,174 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Travel Journal" />
   <meta name="mobile-web-app-capable" content="yes" />
-  <meta name="theme-color" content="#0f172a" />
+  <!-- [1단계 교체] 앱 기본 배경(웜 아이보리 #F7F5F0)에 맞춘 테마 컬러 -->
+  <meta name="theme-color" content="#F7F5F0" />
 
   <!-- 인라인 SVG 아이콘 -->
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230284c7'/%3E%3Cpath d='M120 330l136-64 136 64-136-24z' fill='%23ffffff'/%3E%3Ccircle cx='256' cy='190' r='54' fill='none' stroke='%23e0f2fe' stroke-width='18'/%3E%3C/svg%3E" />
   <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'%3E%3Crect width='512' height='512' rx='112' fill='%230284c7'/%3E%3Cpath d='M120 330l136-64 136 64-136-24z' fill='%23ffffff'/%3E%3Ccircle cx='256' cy='190' r='54' fill='none' stroke='%23e0f2fe' stroke-width='18'/%3E%3C/svg%3E" />
 
-  <!-- Tailwind CSS CDN & FontAwesome CDN -->
+  <!-- [1단계 교체] 폰트 패밀리 (--font-editorial, --font-ui, --font-mono) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Noto+Serif+KR:wght@500;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css"
+  />
+
+  <!-- Tailwind CSS CDN & 기존/선형 아이콘 CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+  <!-- [1단계 교체] 선형 아이콘 라이브러리 (Lucide Icons - stroke-width: 1.5px 기준) -->
+  <script src="https://unpkg.com/lucide@latest" defer></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      if (window.lucide && typeof window.lucide.createIcons === 'function') {
+        window.lucide.createIcons({
+          attrs: {
+            'stroke-width': 1.5
+          }
+        });
+      }
+    });
+  </script>
 
   <!-- Leaflet 지도 CSS & JS (정적 포함으로 로드 지연/오류 방지) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-
   <style>
     /* ====================================================================
-       [리팩토링] 킨포크 감성 어스톤 디자인 토큰 및 공통 유틸리티 변수
+       [1단계 교체] 컬러 토큰 · 폰트 · 모노스페이스 숫자 · 선형 아이콘 기준
        ==================================================================== */
     :root {
-      --kinfolk-bg: #FBF9F5;              /* 전체 앱 배경: 따뜻한 크림/오트밀 톤 */
-      --kinfolk-card: #FFFFFF;            /* 카드 및 모달 배경: 순백색 */
-      --kinfolk-border: #EAE3D9;          /* 테두리 및 구분선: 부드러운 모래색 */
-      --kinfolk-primary: #8C7A6B;         /* 주요 버튼 및 포인트: 어스톤 브라운 */
-      --kinfolk-primary-hover: #7A6E63;   /* 버튼 호버 색상 */
-      --kinfolk-subtle: #F4EFEA;          /* 서브 배경 및 배지: 연한 오트밀 톤 */
-      --kinfolk-text-main: #2C2621;       /* 메인 텍스트: 짙은 차콜 브라운 */
-      --kinfolk-text-sub: #7A6E63;        /* 서브 텍스트: 차분한 회갈색 */
+      /* 시그니처 컬러 시스템 */
+      --paper-bg: #F7F5F0;          /* Main BG: 웜 아이보리 (Warm Ivory) */
+      --paper-surface: #FFFDF9;     /* Surface: 코튼 페이퍼 화이트 */
+      --paper-card-alt: #EBE6DD;    /* Alt Surface: 샌드 베이지 (Sand Beige) */
+      --paper-border: #D8D1C7;      /* Hairline / Border: 웜 스톤 그레이 */
+
+      --ink-primary: #242220;       /* Primary Ink: 딥 차콜 잉크 */
+      --ink-secondary: #8A847C;     /* Secondary Ink: 연필 그레이 (Pencil Gray) */
+      --ink-muted: #B5AFA4;         /* 보조 연필 그레이 */
+
+      --stamp-red: #B85042;         /* Accent 1: 빈티지 테라코타 / 소인 레드 */
+      --stamp-olive: #5C6B54;       /* Accent 2: 세이지 올리브 그린 */
+      --stamp-blue: #3B5978;        /* Accent 3: 프러시안 잉크 블루 */
+
+      /* 폰트 패밀리 변수 */
+      --font-editorial: 'Cormorant Garamond', 'Noto Serif KR', Georgia, serif;
+      --font-ui: 'Pretendard', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', 'D2Coding', monospace;
+
+      /* 형태 및 아이콘 선 굵기 기준 */
+      --radius-card: 12px;
+      --radius-stamp: 8px;
+      --icon-stroke-width: 1.5px;
+      --shadow-none: none;
+
+      /* 기존 --kinfolk-* 참조 호환 브릿지 (1단계 안전 유지용) */
+      --kinfolk-bg: var(--paper-bg);
+      --kinfolk-card: var(--paper-surface);
+      --kinfolk-primary: var(--stamp-olive);
+      --kinfolk-primary-hover: #4B5844;
+      --kinfolk-subtle: var(--paper-card-alt);
+      --kinfolk-border: var(--paper-border);
+      --kinfolk-text-main: var(--ink-primary);
+      --kinfolk-text-sub: var(--ink-secondary);
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
     }
 
     body {
-      background-color: var(--kinfolk-bg) !important;
-      color: var(--kinfolk-text-main) !important;
+      background-color: var(--paper-bg) !important;
+      color: var(--ink-primary) !important;
+      font-family: var(--font-ui);
+      margin: 0;
+      padding: 0;
+      box-shadow: var(--shadow-none);
       -webkit-tap-highlight-color: transparent;
       padding-bottom: env(safe-area-inset-bottom, 5.5rem);
     }
 
-    /* 동적 생성 카드 및 모달 공통 킨포크 스타일 클래스 정의 */
+    /* 매거진 에디토리얼 타이틀 */
+    .editorial-title {
+      font-family: var(--font-editorial);
+      color: var(--ink-primary);
+      letter-spacing: -0.02em;
+    }
+
+    /* 모노스페이스 숫자 (tabular-nums 고정폭 정렬) */
+    .mono-num,
+    .font-mono,
+    [data-tabular="true"] {
+      font-family: var(--font-mono);
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: "tnum" 1, "lnum" 1;
+    }
+
+    /* 선형 아이콘 스타일 기준 (stroke-width: 1.5px) */
+    .line-icon,
+    [data-lucide],
+    svg.lucide {
+      width: 18px;
+      height: 18px;
+      display: inline-block;
+      vertical-align: middle;
+      color: currentColor;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: var(--icon-stroke-width, 1.5px);
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex-shrink: 0;
+    }
+
+    .line-icon-sm {
+      width: 14px;
+      height: 14px;
+    }
+
+    .line-icon-lg {
+      width: 22px;
+      height: 22px;
+    }
+
+    /* 동적 생성 카드 및 모달 공용 스타일 클래스 */
     .kinfolk-card {
-      background-color: var(--kinfolk-card) !important;
-      border: 1px solid var(--kinfolk-border) !important;
-      color: var(--kinfolk-text-main) !important;
+      background-color: var(--paper-surface) !important;
+      border: 1px solid var(--paper-border) !important;
+      color: var(--ink-primary) !important;
+      box-shadow: var(--shadow-none) !important;
     }
     .kinfolk-btn-primary {
       background-color: var(--kinfolk-primary) !important;
-      color: #ffffff !important;
+      color: var(--paper-surface) !important;
+      box-shadow: var(--shadow-none) !important;
     }
     .kinfolk-btn-primary:hover {
       background-color: var(--kinfolk-primary-hover) !important;
     }
     .kinfolk-input {
-      background-color: var(--kinfolk-bg) !important;
-      border: 1px solid var(--kinfolk-border) !important;
-      color: var(--kinfolk-text-main) !important;
+      background-color: var(--paper-bg) !important;
+      border: 1px solid var(--paper-border) !important;
+      color: var(--ink-primary) !important;
     }
     .kinfolk-input:focus {
       border-color: var(--kinfolk-primary) !important;
-      ring: 1px var(--kinfolk-primary) !important;
     }
     .kinfolk-badge {
-      background-color: var(--kinfolk-subtle) !important;
-      color: var(--kinfolk-text-sub) !important;
-      border: 1px solid var(--kinfolk-border) !important;
+      background-color: var(--paper-card-alt) !important;
+      color: var(--ink-secondary) !important;
+      border: 1px solid var(--paper-border) !important;
     }
 
     /* 기존 스크롤바 및 인쇄 스타일 유지 */
@@ -92,7 +197,7 @@
     }
     @media print {
       @page { size: A4 portrait; margin: 14mm 12mm; }
-      body { background: #ffffff !important; padding-bottom: 0 !important; }
+      body { background: var(--paper-surface) !important; padding-bottom: 0 !important; }
       header, nav, button, form, .no-print, .fixed { display: none !important; }
       #homeView { display: none !important; }
       #tripDetailView { display: block !important; max-width: 100% !important; padding: 0 !important; }

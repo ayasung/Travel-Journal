@@ -1219,7 +1219,7 @@ function extractCleanPlaceForRoute(rawPlaceStr) {
     }
   }
 
-  // 3. 일반 및 기타 예약 연동 일정("[숙소 체크인] ", "[티켓/투어] " 등) 대괄호 접두어 정상 제거
+  // 3. 일반 및 기타 예약 연동 일정("[숙소 체크인] ", "[관광] " 등) 대괄호 접두어 정상 제거
   let clean = raw
     .replace(/^\[.*?\]\s*/, '')
     .replace(/\b[A-Z]{2}\d{3,4}\b/gi, '')
@@ -2145,7 +2145,7 @@ async function openAddBookingModal() {
   openModalSafe('modalAddBooking');
 }
 
-function openAddScheduleModal() {
+function openAddScheduleModal()  {
   const trip = getActiveTrip();
   if (!trip) return;
   editingScheduleId = null;
@@ -2186,7 +2186,7 @@ function openAddScheduleModal() {
 
   if ($('chkScheduleSyncBooking')) $('chkScheduleSyncBooking').checked = false;
   $('scheduleBookingFieldsBox')?.classList.add('hidden');
-  if ($('selectScheduleBookingCategory')) $('selectScheduleBookingCategory').value = '티켓/투어';
+  if ($('selectScheduleBookingCategory')) $('selectScheduleBookingCategory').value = '관광';
   if ($('inputScheduleBookingCode')) $('inputScheduleBookingCode').value = '';
 
   $('scheduleUpdateLinkedOptionRow')?.classList.add('hidden');
@@ -2656,7 +2656,7 @@ document.body.addEventListener('click', async (e) => {
           if ($('chkScheduleSyncBooking')) $('chkScheduleSyncBooking').checked = Boolean(linkedBk);
           $('scheduleBookingFieldsBox')?.classList.toggle('hidden', !linkedBk);
           if ($('selectScheduleBookingCategory')) {
-            $('selectScheduleBookingCategory').value = linkedBk?.category || '티켓/투어';
+            $('selectScheduleBookingCategory').value = linkedBk?.category || '관광';
           }
           if ($('inputScheduleBookingCode')) $('inputScheduleBookingCode').value = linkedBk?.code || '';
     
@@ -3594,7 +3594,7 @@ $('formCreateSchedule')?.addEventListener('submit', async (e) => {
         ? Array.from(expPartChks).map((c) => c.value)
         : [expPayer];
 
-    const bkCategory = $('selectScheduleBookingCategory')?.value || '티켓/투어';
+    const bkCategory = $('selectScheduleBookingCategory')?.value || '관광';
     const bkCode = ($('inputScheduleBookingCode')?.value || '').trim().toUpperCase();
     const scheduleDate = typeof getDateForTripDay === 'function'
       ? getDateForTripDay(trip, day)

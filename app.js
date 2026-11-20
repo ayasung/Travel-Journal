@@ -444,15 +444,20 @@ function setupDynamicDomEnhancements() {
 // ============================================================================
 // 5. Firebase 초기화 & 데이터 유실 방지 로컬 마이그레이션 스토리지
 // ============================================================================
+// ============================================================================
+// [4단계 적용] 헤더 동기화 배지, 하단 6개 탭 전환, 사진 · 리뷰 · 체크리스트 렌더러
+// ============================================================================
 function updateSyncBadge(online) {
   const badge = $('connectionStatusBadge');
   if (!badge) return;
   if (online) {
     badge.textContent = '🟢 실시간 동기화';
-    badge.className = 'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700';
+    badge.className =
+      'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--paper-card-alt)] border border-[var(--paper-border)] text-[var(--stamp-olive)]';
   } else {
     badge.textContent = '⚪ 오프라인';
-    badge.className = 'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600';
+    badge.className =
+      'inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-[var(--paper-card-alt)] border border-[var(--paper-border)] text-[var(--ink-secondary)]';
   }
 }
 
@@ -1135,8 +1140,8 @@ function switchMainTab(tabName) {
   document.querySelectorAll('.main-tab-btn').forEach((btn) => {
     const isMatch = btn.getAttribute('data-main-tab') === tabName;
     btn.className = isMatch
-      ? 'main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-xl bg-[var(--kinfolk-subtle)] text-[var(--kinfolk-text-main)] font-extrabold text-[11px] transition'
-      : 'main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-xl text-slate-500 hover:bg-slate-50 font-bold text-[11px] transition';
+      ? 'main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-[10px] bg-[var(--paper-card-alt)] border border-[var(--paper-border)] text-[var(--ink-primary)] font-bold text-[11px] transition'
+      : 'main-tab-btn touch-target flex-1 min-w-[58px] flex flex-col items-center justify-center rounded-[10px] text-[var(--ink-secondary)] hover:bg-[var(--paper-card-alt)] font-semibold text-[11px] transition';
   });
 
   if (tabName === 'itinerary') {
@@ -1941,19 +1946,20 @@ function renderPhotosTab(trip) {
   const dayFilter = $('selectPhotoDayFilter')?.value || 'ALL';
   const allPhotos = trip.photos || [];
   let filtered = dayFilter === 'ALL' ? allPhotos : allPhotos.filter((p) => String(p.day) === dayFilter);
-
   if (currentPhotoFilter !== '전체') {
     filtered = filtered.filter((p) => p.category === currentPhotoFilter);
   }
-
   if ($('photoTotalCountBadge')) $('photoTotalCountBadge').textContent = `총 ${allPhotos.length}장`;
 
   if (filtered.length === 0) {
-    grid.className = 'py-12 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400';
+    grid.className =
+      'py-12 px-4 text-center bg-[var(--paper-surface)] rounded-[12px] border border-dashed border-[var(--paper-border)] text-[var(--ink-secondary)] space-y-1.5';
     grid.innerHTML = `
-      <i class="fa-solid fa-camera text-2xl mb-1.5 text-slate-300"></i>
-      <p class="text-xs">조건에 맞는 사진이 없습니다. [사진 추가]로 추억을 남겨보세요!</p>
+      <i data-lucide="camera" class="line-icon-lg mx-auto text-[var(--ink-secondary)]"></i>
+      <p class="text-xs font-bold text-[var(--ink-primary)]">조건에 맞는 사진이 없습니다.</p>
+      <p class="text-[11px]">[+ 사진 추가] 버튼으로 여정의 장면을 남겨보세요.</p>
     `;
+    if (window.lucide) window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
     return;
   }
 
@@ -1962,14 +1968,14 @@ function renderPhotosTab(trip) {
     .reverse()
     .map(
       (photo) => `
-      <div data-action="view-photo" data-id="${escapeHtml(photo.id)}" class="relative aspect-square rounded-xl overflow-hidden bg-slate-100 border border-slate-200/60 cursor-pointer group shadow-2xs">
+      <div data-action="view-photo" data-id="${escapeHtml(photo.id)}" class="relative aspect-square rounded-[10px] overflow-hidden bg-[var(--paper-card-alt)] border border-[var(--paper-border)] cursor-pointer group">
         <img src="${photo.dataUrl}" alt="${escapeHtml(photo.place)}" class="w-full h-full object-cover pointer-events-none" />
         <div class="absolute top-1 left-1 flex gap-1 pointer-events-none">
-          <span class="bg-black/60 text-white text-[9px] font-bold px-1.5 py-0.5 rounded">Day ${photo.day}</span>
-          <span class="bg-sky-600/85 text-white text-[9px] font-bold px-1.5 py-0.5 rounded">${escapeHtml(photo.category || '기타')}</span>
+          <span class="mono-num bg-[var(--ink-primary)]/85 text-[var(--paper-surface)] text-[9px] font-bold px-1.5 py-0.5 rounded-[6px]">Day ${photo.day}</span>
+          <span class="bg-[var(--stamp-olive)]/90 text-[var(--paper-surface)] text-[9px] font-bold px-1.5 py-0.5 rounded-[6px]">${escapeHtml(photo.category || '기타')}</span>
         </div>
-        <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/40 to-transparent p-1.5 pointer-events-none">
-          <p class="text-[10px] font-bold text-white truncate">${escapeHtml(photo.place || '장소')}</p>
+        <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#242220]/80 via-[#242220]/40 to-transparent p-1.5 pointer-events-none">
+          <p class="text-[10px] font-semibold text-[var(--paper-surface)] truncate">${escapeHtml(photo.place || '장소')}</p>
         </div>
       </div>
     `
@@ -1989,11 +1995,13 @@ function renderReviewsTab(trip) {
 
   if (filtered.length === 0) {
     container.innerHTML = `
-      <div class="py-12 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
-        <i class="fa-solid fa-star text-2xl mb-1.5 text-slate-300"></i>
-        <p class="text-xs">작성된 리뷰가 없습니다. [리뷰 작성]을 눌러 기록을 남겨보세요!</p>
+      <div class="py-12 px-4 text-center bg-[var(--paper-surface)] rounded-[12px] border border-dashed border-[var(--paper-border)] text-[var(--ink-secondary)] space-y-1.5">
+        <i data-lucide="star" class="line-icon-lg mx-auto text-[var(--ink-secondary)]"></i>
+        <p class="text-xs font-bold text-[var(--ink-primary)]">작성된 리뷰가 없습니다.</p>
+        <p class="text-[11px]">[+ 리뷰 작성]을 눌러 기억에 남는 장소를 기록해 보세요.</p>
       </div>
     `;
+    if (window.lucide) window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
     return;
   }
 
@@ -2002,9 +2010,9 @@ function renderReviewsTab(trip) {
   ).toFixed(1);
 
   const summaryBanner = `
-    <div class="bg-amber-50/80 border border-amber-200/80 rounded-2xl px-4 py-2.5 flex items-center justify-between">
-      <span class="text-xs font-extrabold text-amber-900">평균 만족도 (${filtered.length}건)</span>
-      <span class="text-sm font-extrabold text-amber-600">★ ${avgScore} / 5.0</span>
+    <div class="bg-[var(--paper-card-alt)] border border-[var(--paper-border)] rounded-[12px] px-4 py-2.5 flex items-center justify-between">
+      <span class="text-xs font-bold text-[var(--ink-primary)]">평균 만족도 (<span class="mono-num">${filtered.length}</span>건)</span>
+      <span class="mono-num text-sm font-bold text-[var(--stamp-red)]">★ ${avgScore} / 5.0</span>
     </div>
   `;
 
@@ -2017,48 +2025,58 @@ function renderReviewsTab(trip) {
         ? rv.photoIds.map((pid) => (trip.photos || []).find((p) => p.id === pid)).filter(Boolean)
         : [];
 
-      const photosRowHtml =
+      const photosRow =
         attachedPhotos.length > 0
-          ? `<div class="grid grid-cols-3 gap-1.5 pt-1">
+          ? `<div class="flex gap-1.5 overflow-x-auto no-scrollbar pt-1">
               ${attachedPhotos
                 .map(
-                  (p) =>
-                    `<img src="${p.dataUrl}" data-action="view-photo" data-id="${escapeHtml(p.id)}" class="aspect-square object-cover rounded-lg border border-slate-100 cursor-pointer" />`
+                  (ph) =>
+                    `<img src="${ph.dataUrl}" alt="${escapeHtml(ph.place || '')}" class="w-14 h-14 rounded-[8px] object-cover border border-[var(--paper-border)] shrink-0" />`
                 )
                 .join('')}
             </div>`
           : '';
 
       return `
-        <div class="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-2">
+        <div class="bg-[var(--paper-surface)] border border-[var(--paper-border)] rounded-[12px] p-3.5 space-y-2">
           <div class="flex items-start justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-1.5 flex-wrap">
-                <span class="text-[10px] font-extrabold px-2 py-0.5 rounded bg-sky-100 text-sky-700">${escapeHtml(rv.category)}</span>
-                <span class="text-[10px] font-bold text-slate-400">Day ${rv.day || 1}</span>
-                ${rv.priceMemo ? `<span class="text-[10px] font-bold text-slate-600 bg-slate-100 px-1.5 py-0.5 rounded">${escapeHtml(rv.priceMemo)}</span>` : ''}
-                ${rv.revisit ? '<span class="text-[10px] font-extrabold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200">재방문 의사 👍</span>' : ''}
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-[8px] bg-[var(--paper-card-alt)] text-[var(--stamp-blue)] border border-[var(--paper-border)]">${escapeHtml(rv.category || '기타')}</span>
+                <span class="mono-num text-[10px] font-semibold text-[var(--ink-secondary)]">Day ${rv.day || 1}</span>
+                ${
+                  rv.revisit
+                    ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-[8px] bg-[var(--paper-bg)] text-[var(--stamp-olive)] border border-[var(--paper-border)]">재방문 의사</span>'
+                    : ''
+                }
               </div>
-              <h4 class="text-sm font-extrabold text-slate-800 mt-1 truncate">${escapeHtml(rv.place)}</h4>
-              <div class="text-xs text-amber-500 font-bold tracking-tight mt-0.5">${starsStr} (${ratingNum}.0)</div>
+              <h4 class="editorial-title text-lg font-semibold text-[var(--ink-primary)] mt-1 truncate">${escapeHtml(rv.place)}</h4>
+              <div class="flex items-center gap-2">
+                <span class="mono-num text-xs font-bold text-[var(--stamp-red)]">${starsStr}</span>
+                ${rv.priceMemo ? `<span class="mono-num text-[11px] text-[var(--ink-secondary)]">· ${escapeHtml(rv.priceMemo)}</span>` : ''}
+              </div>
             </div>
             <div class="flex items-center gap-0.5 shrink-0">
-              <button type="button" data-action="edit-review" data-id="${escapeHtml(rv.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="리뷰 수정">
-                <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
+              <button type="button" data-action="edit-review" data-id="${escapeHtml(rv.id)}" class="touch-target flex items-center justify-center rounded-[8px] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition" title="리뷰 수정">
+                <i data-lucide="pen-line" class="line-icon-sm pointer-events-none"></i>
               </button>
-              <button type="button" data-action="delete-review" data-id="${escapeHtml(rv.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="리뷰 삭제">
-                <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
+              <button type="button" data-action="delete-review" data-id="${escapeHtml(rv.id)}" class="touch-target flex items-center justify-center rounded-[8px] text-[var(--ink-secondary)] hover:text-[var(--stamp-red)] transition" title="리뷰 삭제">
+                <i data-lucide="trash-2" class="line-icon-sm pointer-events-none"></i>
               </button>
             </div>
           </div>
-          <p class="text-xs text-slate-600 bg-slate-50 p-3 rounded-xl leading-relaxed whitespace-pre-line break-words">${escapeHtml(rv.content)}</p>
-          ${photosRowHtml}
+          <p class="text-xs text-[var(--ink-primary)] bg-[var(--paper-bg)] border border-[var(--paper-border)] p-2.5 rounded-[10px] leading-relaxed whitespace-pre-line">${escapeHtml(rv.content)}</p>
+          ${photosRow}
         </div>
       `;
     })
     .join('');
 
   container.innerHTML = summaryBanner + cardsHtml;
+
+  if (window.lucide) {
+    window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+  }
 }
 
 function renderChecklistTab(trip) {
@@ -2074,37 +2092,55 @@ function renderChecklistTab(trip) {
   }
 
   if (activeList.length === 0) {
-    container.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">${isShopping ? '등록된 쇼핑 품목이 없습니다.' : '등록된 여행 준비물이 없습니다.'}</p>`;
+    container.innerHTML = `
+      <div class="py-8 px-4 text-center bg-[var(--paper-bg)] rounded-[10px] border border-dashed border-[var(--paper-border)] text-xs text-[var(--ink-secondary)]">
+        ${isShopping ? '등록된 쇼핑 품목이 없습니다.' : '등록된 여행 준비물이 없습니다.'}
+      </div>
+    `;
     return;
   }
 
   container.innerHTML = activeList
-    .map((item) => {
-      const priceBadge =
-        isShopping && Number(item.expectedPrice) > 0
-          ? `<span class="text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded ml-1.5">${Number(item.expectedPrice).toLocaleString()}</span>`
-          : '';
-
-      return `
-        <div class="flex items-center justify-between bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200/70">
-          <label class="touch-target flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
-            <input type="checkbox" data-action="toggle-cl-item" data-id="${escapeHtml(item.id)}" ${item.checked ? 'checked' : ''} class="w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
-            <span class="text-xs font-semibold truncate ${item.checked ? 'line-through text-slate-400' : 'text-slate-800'}">
-              ${escapeHtml(item.text)}${priceBadge}
-            </span>
-          </label>
-          <div class="flex items-center gap-0.5 shrink-0">
-            <button type="button" data-action="edit-cl-item" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center text-slate-400 hover:text-sky-600 transition" title="수정">
-              <i class="fa-solid fa-pen text-[11px] pointer-events-none"></i>
-            </button>
-            <button type="button" data-action="delete-cl-item" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center text-slate-300 hover:text-rose-500 transition" title="삭제">
-              <i class="fa-solid fa-xmark text-sm pointer-events-none"></i>
-            </button>
-          </div>
+    .map(
+      (item) => `
+      <div class="flex items-center justify-between gap-2 px-3 py-2.5 rounded-[10px] border border-[var(--paper-border)] ${
+        item.checked ? 'bg-[var(--paper-card-alt)]/60' : 'bg-[var(--paper-bg)]'
+      }">
+        <label class="flex items-center gap-2.5 flex-1 min-w-0 cursor-pointer">
+          <input
+            type="checkbox"
+            data-action="toggle-cl-item"
+            data-id="${escapeHtml(item.id)}"
+            ${item.checked ? 'checked' : ''}
+            class="w-4 h-4 rounded border-[var(--paper-border)] accent-[var(--stamp-olive)] shrink-0"
+          />
+          <span class="text-xs font-semibold truncate ${
+            item.checked ? 'line-through text-[var(--ink-secondary)]' : 'text-[var(--ink-primary)]'
+          }">
+            ${escapeHtml(item.text)}
+          </span>
+        </label>
+        <div class="flex items-center gap-1 shrink-0">
+          ${
+            isShopping && Number(item.expectedPrice) > 0
+              ? `<span class="mono-num text-[11px] font-bold text-[var(--stamp-blue)] mr-1">${Number(item.expectedPrice).toLocaleString()}</span>`
+              : ''
+          }
+          <button type="button" data-action="edit-cl-item" data-id="${escapeHtml(item.id)}" class="p-1.5 rounded-[8px] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]" title="수정">
+            <i data-lucide="pen-line" class="line-icon-sm pointer-events-none"></i>
+          </button>
+          <button type="button" data-action="delete-cl-item" data-id="${escapeHtml(item.id)}" class="p-1.5 rounded-[8px] text-[var(--ink-secondary)] hover:text-[var(--stamp-red)]" title="삭제">
+            <i data-lucide="trash-2" class="line-icon-sm pointer-events-none"></i>
+          </button>
         </div>
-      `;
-    })
+      </div>
+    `
+    )
     .join('');
+
+  if (window.lucide) {
+    window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+  }
 }
 
 // ============================================================================
@@ -2689,8 +2725,8 @@ document.body.addEventListener('click', async (e) => {
       document.querySelectorAll('.photo-cat-chip').forEach((c) => {
         const on = c.getAttribute('data-photo-cat') === currentPhotoFilter;
         c.className = on
-          ? 'photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-slate-800 text-white'
-          : 'photo-cat-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600';
+          ? 'photo-cat-chip touch-target shrink-0 px-3 rounded-[10px] text-xs font-bold bg-[var(--ink-primary)] text-[var(--paper-surface)]'
+          : 'photo-cat-chip touch-target shrink-0 px-3 rounded-[10px] text-xs font-semibold bg-[var(--paper-surface)] border border-[var(--paper-border)] text-[var(--ink-secondary)]';
       });
       const trip = getActiveTrip();
       if (trip) renderPhotosTab(trip);
@@ -2703,8 +2739,8 @@ document.body.addEventListener('click', async (e) => {
       document.querySelectorAll('.review-filter-chip').forEach((c) => {
         const on = c.getAttribute('data-review-filter') === currentReviewFilter;
         c.className = on
-          ? 'review-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-extrabold bg-slate-800 text-white'
-          : 'review-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600';
+          ? 'review-filter-chip touch-target shrink-0 px-3 rounded-[10px] text-xs font-bold bg-[var(--ink-primary)] text-[var(--paper-surface)]'
+          : 'review-filter-chip touch-target shrink-0 px-3 rounded-[10px] text-xs font-semibold bg-[var(--paper-surface)] border border-[var(--paper-border)] text-[var(--ink-secondary)]';
       });
       const trip = getActiveTrip();
       if (trip) renderReviewsTab(trip);
@@ -2723,8 +2759,8 @@ document.body.addEventListener('click', async (e) => {
       document.querySelectorAll('.cl-mode-btn').forEach((b) => {
         const on = b.getAttribute('data-checklist-mode') === currentChecklistSubTab;
         b.className = on
-          ? 'cl-mode-btn py-2 rounded-lg text-xs font-extrabold bg-white text-sky-600 shadow-2xs transition'
-          : 'cl-mode-btn py-2 rounded-lg text-xs font-bold text-slate-500 transition';
+          ? 'cl-mode-btn py-2 rounded-[8px] text-xs font-bold bg-[var(--paper-surface)] text-[var(--ink-primary)] border border-[var(--paper-border)] transition inline-flex items-center justify-center gap-1.5'
+          : 'cl-mode-btn py-2 rounded-[8px] text-xs font-semibold text-[var(--ink-secondary)] transition inline-flex items-center justify-center gap-1.5';
       });
       const isShop = currentChecklistSubTab === 'shopping';
       if ($('inputNewChecklistText')) {

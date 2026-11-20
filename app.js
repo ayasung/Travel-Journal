@@ -1406,11 +1406,12 @@ function renderBookingsTab(trip) {
   const container = $('bookingCardsContainer');
   if (!container) return;
 
-  const allBookings = trip.bookings || [];
+  const allBookings = Array.isArray(trip.bookings) ? trip.bookings : [];
+  const activeFilter = String(currentBookingFilter || '전체').trim();
   const filtered =
-    currentBookingFilter === '전체'
+    activeFilter === '전체'
       ? allBookings
-      : allBookings.filter((b) => normalizeBookingCat(b.category) === currentBookingFilter);
+      : allBookings.filter((b) => String(b?.category || '').trim() === activeFilter);
 
   if (filtered.length === 0) {
     container.innerHTML = `<div class="py-12 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
@@ -2391,9 +2392,9 @@ document.body.addEventListener('click', async (e) => {
 
     const bkChip = e.target.closest('[data-booking-filter]');
     if (bkChip) {
-      currentBookingFilter = bkChip.getAttribute('data-booking-filter') || '전체';
+      currentBookingFilter = String(bkChip.getAttribute('data-booking-filter') || '전체').trim() || '전체';
       document.querySelectorAll('.booking-filter-chip').forEach((c) => {
-        const on = c.getAttribute('data-booking-filter') === currentBookingFilter;
+        const on = String(c.getAttribute('data-booking-filter') || '').trim() === currentBookingFilter;
         c.className = on
           ? 'booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-extrabold bg-slate-800 text-white'
           : 'booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600';

@@ -106,6 +106,8 @@ let leafletMap = null;
 let leafletLayerGroup = null;
 
 let deletedTripIds = new Set(); // 로컬에서 삭제된 여행 ID를 임시 기록
+let isReviewCategoryManuallyChanged = false; // [추가] 리뷰 카테고리를 사용자가 수동으로 바꿨는지 여부
+
 
 // ============================================================================
 // 2. 방어형 DOM 헬퍼 및 유틸리티
@@ -202,6 +204,65 @@ function registerServiceWorkerSafe() {
       });
     });
   }
+}
+
+function registerServiceWorkerSafe() { if ('serviceWorker' in navigator) { window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch((err) => { console.warn('Service Worker 등록 생략:', err); }); }); } }
+
+// [추가] 사진 카테고리를 리뷰 카테고리('숙소', '맛집/카페', '관광지', '기타')로 매핑
+function mapPhotoCategoryToReviewCategory(photoCat) {
+  if (photoCat === '숙소') return '숙소';
+  if (photoCat === '맛집/카페') return '맛집/카페';
+  if (photoCat === '관광지') return '관광지';
+  return '기타'; // '풍경', '기타'는 리뷰에서 '기타'로 연동
+}
+
+// [추가] 선택한 리뷰 카테고리에 맞는 예약/일정 항목을 불러와 드롭다운에 채움
+function populateReviewPlaceCandidates(trip, reviewCategory) {
+  const sel = $('selectReviewFromBooking');
+  if (!sel || !trip) return;
+
+  const bookingCategoryMap = {
+    숙소: '숙소',
+    '맛집/카페': '식당',
+    관광지: '관광'
+  };
+  const targetBookingCat = bookingCategoryMap[reviewCategory] || '';
+
+  sel.innerHTML = '<option value="">직접 입력 (또는 일정/예약 내역 선택)</option>';
+  if (!targetBookingCat) return;
+
+  const addedLabels = new Set();
+
+  (trip.bookings || []).forEach((b) => {
+    if (b.category !== targetBookingCat) return;
+    const cleanTitle = String(b.title || '').replace(/^\[.*?\]\s*/, '').trim() || b.title;
+    const costStr = Number(b.amount) > 0 ? ` · ${Number(b.amount).toLocaleString()} ${b.currency}` : '';
+    const label = `[예약·${b.category}] ${cleanTitle}${costStr}`;
+    if (addedLabels.has(label)) return;
+    addedLabels.add(label);
+
+    const opt = document.createElement('option');
+    opt.value = `bk:${b.id}`;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  });
+
+  (trip.itineraries || []).forEach((it) => {
+    const match = String(it.place || '').match(/^\[(.*?)\]\s*(.*)$/);
+    if (!match) return;
+    const tag = match[1].trim();
+    const cleanPlace = match[2].trim();
+    if (!tag.startsWith(targetBookingCat) || !cleanPlace) return;
+
+    const label = `[일정·Day ${it.day || 1}] ${cleanPlace}`;
+    if (addedLabels.has(label)) return;
+    addedLabels.add(label);
+
+    const opt = document.createElement('option');
+    opt.value = `it:${it.id}`;
+    opt.textContent = label;
+    sel.appendChild(opt);
+  });
 }
 
 // ============================================================================
@@ -2315,8 +2376,10 @@ function openAddReviewModal() {
     });
   }
 
+  isReviewCategoryManuallyChanged = false;
   if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = '';
-  if ($('selectReviewCategory')) $('selectReviewCategory').value = '맛집/카페';
+  if ($('selectReviewCategory')) $('selectReviewCategory').value = '숙소';
+  populateReviewPlaceCandidates(trip, '숙소');
   if ($('selectReviewDay')) $('selectReviewDay').value = String(currentItineraryDay || 1);
   setReviewStarRating(5);
   if ($('chkReviewRevisit')) $('chkReviewRevisit').checked = true;
@@ -2892,17 +2955,24 @@ document.body.addEventListener('click', async (e) => {
         openAddReviewModal();
         break;
 
-      case 'toggle-review-photo': {
-        const trip = getActiveTrip();
-        if (!trip || !id) break;
-        if (selectedReviewPhotoIds.includes(id)) {
-          selectedReviewPhotoIds = selectedReviewPhotoIds.filter((pid) => pid !== id);
-        } else {
-          selectedReviewPhotoIds.push(id);
+        case 'toggle-review-photo': {
+          const trip = getActiveTrip();
+          if (!trip || !id) break;
+          const alreadySelected = selectedReviewPhotoIds.includes(id);
+          if (alreadySelected) {
+            selectedReviewPhotoIds = selectedReviewPhotoIds.filter((pid) => pid !== id);
+          } else {
+            selectedReviewPhotoIds.push(id);
+            const pickedPhoto = (trip.photos || []).find((p) => p.id === id);
+            if (pickedPhoto && !isReviewCategoryManuallyChanged && $('selectReviewCategory')) {
+              const mappedCat = mapPhotoCategoryToReviewCategory(pickedPhoto.category);
+              $('selectReviewCategory').value = mappedCat;
+              populateReviewPlaceCandidates(trip, mappedCat);
+            }
+          }
+          renderReviewPhotoThumbnails(trip);
+          break;
         }
-        renderReviewPhotoThumbnails(trip);
-        break;
-      }
 
       case 'edit-review': {
         const trip = getActiveTrip();
@@ -3253,29 +3323,51 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-    if (target.id === 'selectReviewFromBooking') {
-      const bkId = target.value;
+    if (target.id === 'selectReviewCategory') {
+      isReviewCategoryManuallyChanged = true;
       const trip = tripForSelect;
-      if (!trip || !bkId) return;
-      const bk = (trip.bookings || []).find((b) => b.id === bkId);
-      if (!bk) return;
-
-      const rawTitle = bk.title || '';
-      const cleanTitle = rawTitle.replace(/^\[.*?\]\s*/, '').trim();
-
-      if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = cleanTitle || rawTitle;
-      if ($('selectReviewCategory')) {
-        $('selectReviewCategory').value =
-          bk.category === '숙소' ? '숙소' : bk.category === '렌터카' ? '쇼핑/기타' : '관광지';
+      if (trip) {
+        populateReviewPlaceCandidates(trip, target.value);
       }
-      if (bk.date && $('selectReviewDay')) {
-        $('selectReviewDay').value = String(inferDayNumberFromDate(trip, bk.date));
-      }
-      if (Number(bk.amount) > 0) {
-        currentReviewPriceMemo = `${Number(bk.amount).toLocaleString()} ${bk.currency || 'KRW'}`;
-      }
-      if (bk.memo && $('inputReviewContent') && !$('inputReviewContent').value.trim()) {
-        $('inputReviewContent').value = bk.memo;
+      return;
+    }
+    
+    if (target.id === 'selectReviewFromBooking') {
+      const selectedVal = target.value;
+      const trip = tripForSelect;
+      if (!trip || !selectedVal) return;
+    
+      if (selectedVal.startsWith('bk:')) {
+        const bkId = selectedVal.slice(3);
+        const bk = (trip.bookings || []).find((b) => b.id === bkId);
+        if (!bk) return;
+        const rawTitle = bk.title || '';
+        const cleanTitle = rawTitle.replace(/^\[.*?\]\s*/, '').trim();
+    
+        if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = cleanTitle || rawTitle;
+        if (bk.date && $('selectReviewDay')) {
+          $('selectReviewDay').value = String(inferDayNumberFromDate(trip, bk.date));
+        }
+        if (Number(bk.amount) > 0) {
+          currentReviewPriceMemo = `${Number(bk.amount).toLocaleString()} ${bk.currency || 'KRW'}`;
+        }
+        if (bk.memo && $('inputReviewContent') && !$('inputReviewContent').value.trim()) {
+          $('inputReviewContent').value = bk.memo;
+        }
+      } else if (selectedVal.startsWith('it:')) {
+        const itId = selectedVal.slice(3);
+        const it = (trip.itineraries || []).find((s) => s.id === itId);
+        if (!it) return;
+        const match = String(it.place || '').match(/^\[(.*?)\]\s*(.*)$/);
+        const cleanPlace = (match ? match[2] : it.place || '').trim();
+    
+        if ($('inputReviewPlaceName')) $('inputReviewPlaceName').value = cleanPlace;
+        if (it.day && $('selectReviewDay')) {
+          $('selectReviewDay').value = String(it.day);
+        }
+        if (it.memo && $('inputReviewContent') && !$('inputReviewContent').value.trim()) {
+          $('inputReviewContent').value = it.memo;
+        }
       }
       return;
     }

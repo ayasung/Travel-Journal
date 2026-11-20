@@ -359,8 +359,11 @@ async function handleCurrencyDropdownChange(selectElement, trip, isFromNewTrip =
     const closeBtn = document.querySelector('#modalCurrencySelector [data-close-modal]');
     if (closeBtn) {
       closeBtn.onclick = () => {
+        gridContainer.removeEventListener('click', clickHandler);
         closeModalSafe('modalCurrencySelector');
-        selectElement.value = trip?.baseCurrency || 'KRW';
+        if (selectElement.value === 'ADD_CUSTOM_CURRENCY') {
+          selectElement.value = '';
+        }
         resolve(false);
       };
     }
@@ -3276,10 +3279,75 @@ document.body.addEventListener('change', async (e) => {
       return;
     }
 
-    // 지출 또는 예약, 개인 환전 통화 선택 폼에서 '통화 추가'를 골랐을 때의 처리
-    if (target.id === 'selectExpCurrency' || target.id === 'selectBookingCurrency' || target.id === 'selectPrivateExchangeCurrency') {
+    // 일정, 지출, 예약, 개인 환전 통화 선택 폼에서 '통화 추가'를 골랐을 때의 처리
+    if (
+      target.id === 'selectScheduleExpCurrency' ||
+      target.id === 'selectExpCurrency' ||
+      target.id === 'selectBookingCurrency' ||
+      target.id === 'selectPrivateExchangeCurrency'
+    ) {
       const currentTrip = getActiveTrip();
       if (target.value === 'ADD_CUSTOM_CURRENCY' && currentTrip) {
+        const gridContainer = $('currencySelectorButtonsGrid');
+        const closeBtn = document.querySelector('#modalCurrencySelector [data-close-modal]');
+        if (gridContainer) {
+          gridContainer.innerHTML = GLOBAL_CURRENCY_OPTIONS.map((opt) => `
+            <button type="button" data-action="pick-custom-currency" data-code="${opt.code}" class="touch-target p-2.5 rounded-xl border border-slate-200 hover:border-sky-500 hover:bg-sky-50 text-left transition flex flex-col justify-center">
+              <span class="text-xs font-extrabold text-slate-800">${opt.code}</span>
+              <span class="text-[10px] text-slate-500 truncate">${opt.name.replace(/^[A-Z]+\s*\((.*?)\)$/, '$1')}</span>
+            </button>
+          `).join('');
+    
+          openModalSafe('modalCurrencySelector');
+    
+          const handlePickForForms = async (eClick) => {
+            const btn = eClick.target.closest('[data-action="pick-custom-currency"]');
+            if (!btn) return;
+            const chosenCode = (btn.getAttribute('data-code') || '').trim().toUpperCase();
+            gridContainer.removeEventListener('click', handlePickForForms);
+            if (closeBtn) closeBtn.onclick = null;
+            closeModalSafe('modalCurrencySelector');
+    
+            if (chosenCode && chosenCode.length === 3) {
+              if (!currentTrip.customCurrencies) currentTrip.customCurrencies = [];
+              if (!currentTrip.customCurrencies.includes(chosenCode)) {
+                currentTrip.customCurrencies.push(chosenCode);
+                saveLocalData();
+                await syncTripToFirestore(currentTrip);
+              }
+    
+              try {
+                await fetchLiveExchangeRate(chosenCode);
+              } catch (err) {}
+    
+              populateCurrencySelect(target, currentTrip, chosenCode);
+              if (target.id === 'selectExpCurrency') {
+                await syncExpenseModalRateFromApi();
+              }
+              alert(`'${chosenCode}' 통화가 추가되었습니다!`);
+            } else {
+              target.value = '';
+            }
+          };
+    
+          if (closeBtn) {
+            closeBtn.onclick = () => {
+              gridContainer.removeEventListener('click', handlePickForForms);
+              closeModalSafe('modalCurrencySelector');
+              if (target.value === 'ADD_CUSTOM_CURRENCY') {
+                target.value = '';
+              }
+            };
+          }
+    
+          gridContainer.onclick = null;
+          gridContainer.addEventListener('click', handlePickForForms);
+        }
+      } else if (target.id === 'selectExpCurrency') {
+        await syncExpenseModalRateFromApi();
+      }
+      return;
+    }
         const gridContainer = $('currencySelectorButtonsGrid');
         if (gridContainer) {
           gridContainer.innerHTML = GLOBAL_CURRENCY_OPTIONS.map((opt) => `
@@ -3699,7 +3767,12 @@ $('formCreateSchedule')?.addEventListener('submit', async (e) => {
       ? Boolean($('chkScheduleUpdateLinkedItems')?.checked)
       : true;
 
-    const expCurrency = ($('selectScheduleExpCurrency')?.value || trip.baseCurrency || 'KRW').toUpperCase();
+    const rawExpCurrency = String($('selectScheduleExpCurrency')?.value || '').trim().toUpperCase();
+    if (syncExp && (!rawExpCurrency || rawExpCurrency === 'ADD_CUSTOM_CURRENCY')) {
+      alert('지출 연동 통화를 선택해야 합니다.');
+      return;
+    }
+    const expCurrency = rawExpCurrency || (trip.baseCurrency || 'KRW').toUpperCase();
     const expAmount = Number($('inputScheduleExpAmount')?.value) || 0;
     const expPayer = $('selectScheduleExpPayer')?.value || getMyPrivateInfo(trip).myNickname;
     const expPartChks = document.querySelectorAll('.sch-exp-part-chk:checked');
@@ -3820,7 +3893,12 @@ $('formCreateBooking')?.addEventListener('submit', async (e) => {
     const category = $('selectBookingCategory')?.value || '항공';
     const code = ($('inputBookingCode')?.value || '').trim().toUpperCase();
     const memo = ($('inputBookingMemo')?.value || '').trim();
-    const currency = ($('selectBookingCurrency')?.value || 'JPY').toUpperCase();
+    const rawBookingCurrency = String($('selectBookingCurrency')?.value || '').trim().toUpperCase();
+    if (!rawBookingCurrency || rawBookingCurrency === 'ADD_CUSTOM_CURRENCY') {
+      alert('통화를 선택해야 합니다.');
+      return;
+    }
+    const currency = rawBookingCurrency;
     const amount = Number($('inputBookingAmount')?.value) || 0;
     const autoSync = $('chkBookingAutoSync')?.checked !== false;
     const payer = $('selectBookingPayer')?.value || getMyPrivateInfo(trip).myNickname;
@@ -4138,7 +4216,12 @@ $('formCreateExpense')?.addEventListener('submit', async (e) => {
     if (!trip) return;
 
     const title = ($('inputExpTitle')?.value || '').trim();
-    const currency = ($('selectExpCurrency')?.value || 'JPY').toUpperCase();
+    const rawExpCurrency = String($('selectExpCurrency')?.value || '').trim().toUpperCase();
+    if (!rawExpCurrency || rawExpCurrency === 'ADD_CUSTOM_CURRENCY') {
+      alert('통화를 선택해야 합니다.');
+      return;
+    }
+    const currency = rawExpCurrency;
     const amount = Number($('inputExpAmount')?.value) || 0;
     const rateToKrw = currency === 'KRW' ? 1 : Number($('inputExpAppliedRate')?.value) || 1;
     const payer = ($('selectExpPayer')?.value || '').trim() || getMyPrivateInfo(trip).myNickname;

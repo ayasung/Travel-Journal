@@ -668,7 +668,9 @@ function saveLocalData() {
 }
 
 async function syncTripToFirestore(trip) {
-  if (!isCloudOnline || !db || !trip) return;
+  if (!isCloudOnline || !db || !trip || (typeof navigator !== 'undefined' && navigator.onLine === false)) {
+    return;
+  }
   try {
     const payload = normalizeTrip(trip);
     const byteSize = new Blob([JSON.stringify(payload)]).size;
@@ -2652,9 +2654,9 @@ document.body.addEventListener('click', async (e) => {
           saveLocalData();
           renderHomeView();
       
-          // 3. 파이어베이스 문서 삭제
-          if (isCloudOnline && db) {
-            deleteDoc(doc(db, 'trips', tripId)).catch((err) => console.warn(err));
+          // 3. 온라인 상태일 때만 파이어베이스 문서 삭제 (오프라인에서는 로컬 삭제 즉시 반영)
+          if (isCloudOnline && db && navigator.onLine !== false) {
+            deleteDoc(doc(db, 'trips', tripId)).catch((err) => console.warn('클라우드 여행 삭제 경고:', err));
           }
         }
         break;

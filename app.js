@@ -2668,14 +2668,15 @@ document.body.addEventListener('click', async (e) => {
       return;
     }
 
+    // 1) 예약 필터 칩 클릭 스타일 (종이·잉크 톤 적용)
     const bkChip = e.target.closest('[data-booking-filter]');
     if (bkChip) {
       currentBookingFilter = String(bkChip.getAttribute('data-booking-filter') || '전체').trim() || '전체';
       document.querySelectorAll('.booking-filter-chip').forEach((c) => {
         const on = String(c.getAttribute('data-booking-filter') || '').trim() === currentBookingFilter;
         c.className = on
-          ? 'booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-extrabold bg-slate-800 text-white'
-          : 'booking-filter-chip touch-target shrink-0 px-3 rounded-xl text-xs font-bold bg-white border border-slate-200 text-slate-600';
+          ? 'booking-filter-chip touch-target shrink-0 px-3 rounded-[10px] text-xs font-bold bg-[var(--ink-primary)] text-[var(--paper-surface)]'
+          : 'booking-filter-chip touch-target shrink-0 px-3 rounded-[10px] text-xs font-semibold bg-[var(--paper-surface)] border border-[var(--paper-border)] text-[var(--ink-secondary)]';
       });
       const trip = getActiveTrip();
       if (trip) renderBookingsTab(trip);
@@ -2737,6 +2738,7 @@ document.body.addEventListener('click', async (e) => {
       return;
     }
 
+    // 2) 다구간 항공 [+ 구간 추가] 행 생성 (종이·잉크 톤 적용)
     const addSegBtn = e.target.closest('[data-action="add-flight-segment"]');
     if (addSegBtn) {
       const segContainer = $('flightSegmentsContainer') || $('flightSegmentsListContainer');
@@ -2745,24 +2747,24 @@ document.body.addEventListener('click', async (e) => {
         const trip = getActiveTrip();
         const defDate = trip?.startDate || '';
         const newRow = document.createElement('div');
-        newRow.className = 'flight-segment-row bg-white border border-sky-200 rounded-xl p-2.5 space-y-2 relative';
+        newRow.className = 'flight-segment-row bg-[var(--paper-surface)] border border-[var(--paper-border)] rounded-[10px] p-2.5 space-y-2 relative';
         newRow.setAttribute('data-index', idx);
         newRow.innerHTML = `
           <div class="flex items-center justify-between">
-            <span class="text-[11px] font-extrabold text-sky-800">구간 ${idx + 1}</span>
-            <button type="button" data-action="remove-flight-segment" class="text-rose-500 text-xs px-1 hover:underline">삭제</button>
+            <span class="mono-num text-[11px] font-bold text-[var(--stamp-blue)]">SEGMENT ${idx + 1}</span>
+            <button type="button" data-action="remove-flight-segment" class="text-[var(--stamp-red)] text-xs px-1 hover:underline">삭제</button>
           </div>
           <div class="flex gap-1.5">
-            <input type="text" placeholder="편명 (예: RS471)" class="seg-flight-code touch-target flex-1 uppercase font-mono bg-slate-50 border border-slate-200 rounded-lg px-2.5 text-xs font-bold outline-none" />
-            <button type="button" data-action="lookup-segment-flight" class="touch-target px-2.5 rounded-lg bg-sky-600 text-white text-xs font-extrabold shrink-0">조회</button>
+            <input type="text" placeholder="편명 (예: RS471)" class="seg-flight-code mono-num touch-target flex-1 uppercase bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2.5 text-xs font-bold text-[var(--ink-primary)] outline-none" />
+            <button type="button" data-action="lookup-segment-flight" class="touch-target px-2.5 rounded-[8px] bg-[var(--ink-primary)] text-[var(--paper-surface)] text-xs font-bold shrink-0">조회</button>
           </div>
           <div class="grid grid-cols-2 gap-1.5">
-            <input type="date" value="${defDate}" class="seg-flight-date touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
-            <input type="time" value="14:00" class="seg-flight-time touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
+            <input type="date" value="${defDate}" class="seg-flight-date mono-num touch-target bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2 text-xs text-[var(--ink-primary)]" />
+            <input type="time" value="14:00" class="seg-flight-time mono-num touch-target bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2 text-xs text-[var(--ink-primary)]" />
           </div>
           <div class="grid grid-cols-2 gap-1.5">
-            <input type="text" placeholder="출발지" class="seg-flight-dep touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
-            <input type="text" placeholder="도착지" class="seg-flight-arr touch-target bg-slate-50 border border-slate-200 rounded-lg px-2 text-xs" />
+            <input type="text" placeholder="출발지" class="seg-flight-dep touch-target bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2 text-xs text-[var(--ink-primary)]" />
+            <input type="text" placeholder="도착지" class="seg-flight-arr touch-target bg-[var(--paper-bg)] border border-[var(--paper-border)] rounded-[8px] px-2 text-xs text-[var(--ink-primary)]" />
           </div>
         `;
         segContainer.appendChild(newRow);

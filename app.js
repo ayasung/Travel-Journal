@@ -206,8 +206,6 @@ function registerServiceWorkerSafe() {
   }
 }
 
-function registerServiceWorkerSafe() { if ('serviceWorker' in navigator) { window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch((err) => { console.warn('Service Worker 등록 생략:', err); }); }); } }
-
 // [추가] 사진 카테고리를 리뷰 카테고리('숙소', '맛집/카페', '관광지', '기타')로 매핑
 function mapPhotoCategoryToReviewCategory(photoCat) {
   if (photoCat === '숙소') return '숙소';
@@ -751,6 +749,7 @@ function startRealtimeListeners() {
       },
       (err) => {
         console.warn('Firestore 리스너 오프라인 전환:', err);
+        isCloudOnline = false;
         updateSyncBadge(false);
       }
     );

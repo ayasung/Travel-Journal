@@ -1454,50 +1454,116 @@ async function renderRouteMapAndLinks(trip, dayItems) {
   }
 }
 
+// ============================================================================
+// [3단계 적용] 타임라인(러버 스탬프·자유 메모), 티켓 예약, 종이 영수증 정산장 렌더러
+// ============================================================================
+
 function renderItineraryTab(trip) {
   const container = $('itineraryTimelineContainer');
   if (!container) return;
 
-  const selectedDay = Number(currentItineraryDay) || 1;
-  const items = (trip.itineraries || [])
-    .filter((s) => Number(s.day) === selectedDay)
-    .sort((a, b) => (a.time || '').localeCompare(b.time || ''));
+  const dayItems = (trip.itineraries || [])
+    .filter((item) => Number(item.day || 1) === Number(currentItineraryDay))
+    .slice()
+    .sort((a, b) => String(a.time || '').localeCompare(String(b.time || '')));
 
-  renderRouteMapAndLinks(trip, items);
+  if (typeof renderRouteMapAndLinks === 'function') {
+    renderRouteMapAndLinks(trip, dayItems);
+  }
 
-  if (items.length === 0) {
+  if (dayItems.length === 0) {
     container.innerHTML = `
-      <div class="py-10 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
-        <i class="fa-regular fa-calendar-xmark text-2xl mb-1.5 text-slate-300"></i>
-        <p class="text-xs">Day ${selectedDay}에 등록된 일정이 없습니다. [일정 추가]를 눌러보세요.</p>
+      <div class="py-10 px-4 text-center bg-[var(--paper-surface)] rounded-[12px] border border-dashed border-[var(--paper-border)] space-y-1.5">
+        <i data-lucide="compass" class="line-icon-lg text-[var(--ink-secondary)] mx-auto"></i>
+        <p class="text-xs font-bold text-[var(--ink-primary)]">Day ${currentItineraryDay}에 등록된 일정이 없습니다.</p>
+        <p class="text-[11px] text-[var(--ink-secondary)]">상단의 [+ 일정 추가] 버튼으로 여정을 기록해 보세요.</p>
       </div>
     `;
+    if (window.lucide) window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
     return;
   }
 
-  container.innerHTML = items.map((item, idx) => `
-    <div class="kinfolk-card p-3.5 rounded-2xl shadow-xs flex items-start gap-3">
-      <span class="w-6 h-6 rounded-full bg-[var(--kinfolk-subtle)] text-[var(--kinfolk-primary)] text-xs font-extrabold flex items-center justify-center shrink-0 mt-0.5">${idx + 1}</span>
-      <div class="flex-1 min-w-0">
-        <div class="flex items-center justify-between gap-2">
-          <div class="flex items-center gap-1.5">
-            <span class="text-xs font-extrabold text-[var(--kinfolk-primary)]">${escapeHtml(item.time)}</span>
-            ${item.bookingId ? '<span class="text-[9px] font-bold kinfolk-badge px-1.5 py-0.5 rounded">예약연동</span>' : ''}
-          </div>
-          <div class="flex items-center gap-0.5 shrink-0">
-            <button type="button" data-action="edit-itinerary" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-[var(--kinfolk-primary)] transition" title="일정 수정">
-              <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
-            </button>
-            <button type="button" data-action="delete-itinerary" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="일정 삭제">
-              <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
-            </button>
+  const tripDateStr =
+    typeof getDateForTripDay === 'function'
+      ? getDateForTripDay(trip, currentItineraryDay)
+      : trip.startDate || '';
+
+  container.innerHTML = dayItems
+    .map((item, idx) => {
+      const isStamped = Boolean(item.stamped || item.visited || item.completed);
+      const tiltDeg = ((idx % 5) - 2) * 3 - 5; // -11deg ~ +1deg 자연스러운 러버 스탬프 기울기
+
+      return `
+        <div class="relative pl-6">
+          <!-- 좌측 세로 타임라인 축 및 순서 번호 -->
+          <div class="absolute left-2.5 top-0 bottom-0 w-px bg-[var(--paper-border)]"></div>
+          <span class="mono-num absolute left-0 top-3.5 w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center border ${
+            isStamped
+              ? 'bg-[var(--stamp-red)] text-[var(--paper-surface)] border-[var(--stamp-red)]'
+              : 'bg-[var(--paper-surface)] text-[var(--ink-primary)] border-[var(--paper-border)]'
+          }">
+            ${idx + 1}
+          </span>
+
+          <div class="bg-[var(--paper-surface)] border border-[var(--paper-border)] rounded-[12px] p-3.5 space-y-2 transition">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span class="mono-num text-xs font-bold text-[var(--stamp-blue)]">${escapeHtml(item.time || '10:00')}</span>
+                  ${
+                    item.bookingId || item.linkedBookingId
+                      ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-[8px] bg-[var(--paper-card-alt)] text-[var(--stamp-olive)] border border-[var(--paper-border)]">예약연동</span>'
+                      : ''
+                  }
+                  ${
+                    item.linkedExpenseId
+                      ? '<span class="text-[10px] font-bold px-2 py-0.5 rounded-[8px] bg-[var(--paper-card-alt)] text-[var(--stamp-blue)] border border-[var(--paper-border)]">지출연동</span>'
+                      : ''
+                  }
+                </div>
+                <h4 class="text-sm font-bold text-[var(--ink-primary)] mt-1 break-words">${escapeHtml(item.place)}</h4>
+              </div>
+
+              <div class="flex items-center gap-1 shrink-0">
+                <!-- 러버 스탬프 토글 버튼 -->
+                <button
+                  type="button"
+                  data-action="toggle-itinerary-stamp"
+                  data-id="${escapeHtml(item.id)}"
+                  class="${isStamped ? 'rubber-stamp' : 'rubber-stamp-placeholder'}"
+                  style="${isStamped ? `transform: rotate(${tiltDeg}deg);` : ''}"
+                  title="방문 완료 스탬프 찍기/해제"
+                >
+                  ${
+                    isStamped
+                      ? `<span>VISITED</span><span class="text-[8px] font-normal">${escapeHtml(item.stampedDate || tripDateStr)}</span>`
+                      : `<i data-lucide="stamp" class="line-icon-sm pointer-events-none"></i><span class="pointer-events-none">스탬프</span>`
+                  }
+                </button>
+
+                <button type="button" data-action="edit-itinerary" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center rounded-[8px] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition" title="일정 수정">
+                  <i data-lucide="pen-line" class="line-icon-sm pointer-events-none"></i>
+                </button>
+                <button type="button" data-action="delete-itinerary" data-id="${escapeHtml(item.id)}" class="touch-target flex items-center justify-center rounded-[8px] text-[var(--ink-secondary)] hover:text-[var(--stamp-red)] transition" title="일정 삭제">
+                  <i data-lucide="trash-2" class="line-icon-sm pointer-events-none"></i>
+                </button>
+              </div>
+            </div>
+
+            ${
+              item.memo
+                ? `<div class="text-xs text-[var(--ink-secondary)] bg-[var(--paper-bg)] border border-[var(--paper-border)] px-3 py-2 rounded-[8px] break-words leading-relaxed">${escapeHtml(item.memo)}</div>`
+                : ''
+            }
           </div>
         </div>
-        <h4 class="text-sm font-bold text-[var(--kinfolk-text-main)] truncate">${escapeHtml(item.place)}</h4>
-        ${item.memo ? `<p class="text-xs text-[var(--kinfolk-text-sub)] mt-1 bg-[var(--kinfolk-bg)] p-2 rounded-lg break-words">${escapeHtml(item.memo)}</p>` : ''}
-      </div>
-    </div>
-  `).join('');
+      `;
+    })
+    .join('');
+
+  if (window.lucide) {
+    window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+  }
 }
 
 function renderBookingsTab(trip) {

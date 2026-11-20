@@ -1714,16 +1714,22 @@ function renderBookingsTab(trip) {
 
 function renderExpensesTab(trip) {
   const priv = getMyPrivateInfo(trip);
-  const totalBudget = priv.myBudget;
-  const exchangeAmount = priv.exchangeAmount;
-  const exchangeCurrency = priv.exchangeCurrency;
-  const exchangeKrw = priv.exchangeKrw;
+  const members = Array.isArray(trip.members) && trip.members.length > 0 ? trip.members : [priv.myNickname];
+  const expenses = Array.isArray(trip.expenses) ? trip.expenses : [];
 
-  const expenses = trip.expenses || [];
-  const members = Array.isArray(trip.members) ? trip.members : ['나'];
+  const totalBudget = Number(priv.myBudget) || 0;
+  const exchangeAmount = Number(priv.exchangeAmount) || 0;
+  const exchangeCurrency = priv.exchangeCurrency || trip.baseCurrency || 'JPY';
+  const exchangeKrw = Number(priv.exchangeKrw) || 0;
 
   let mySpentKrw = 0;
   let groupTotalKrw = 0;
+  const paidByMember = {};
+  const owedByMember = {};
+  members.forEach((m) => {
+    paidByMember[m] = 0;
+    owedByMember[m] = 0;
+  });
 
   expenses.forEach((ex) => {
     const amt = Number(ex.amount) || 0;
@@ -1731,164 +1737,201 @@ function renderExpensesTab(trip) {
     const krwVal = Math.round(amt * rate);
     groupTotalKrw += krwVal;
 
-    const parts = Array.isArray(ex.participants) && ex.participants.length > 0 ? ex.participants : [ex.payer];
+    const payer = ex.payer || members[0];
+    if (paidByMember[payer] === undefined) paidByMember[payer] = 0;
+    paidByMember[payer] += krwVal;
+
+    const parts = Array.isArray(ex.participants) && ex.participants.length > 0 ? ex.participants : [payer];
+    const perPerson = Math.round(krwVal / parts.length);
+    parts.forEach((p) => {
+      if (owedByMember[p] === undefined) owedByMember[p] = 0;
+      owedByMember[p] += perPerson;
+    });
+
     if (parts.includes(priv.myNickname)) {
-      mySpentKrw += Math.round(krwVal / parts.length);
+      mySpentKrw += perPerson;
     }
   });
 
   const remainKrw = totalBudget - mySpentKrw;
   const remainPercent = totalBudget > 0 ? Math.max(0, Math.min(100, (remainKrw / totalBudget) * 100)) : 100;
-
-  // [개선] 하드코딩된 KRW 대신 여행 설정의 기본 통화(trip.baseCurrency)를 동적 반영
   const baseCurr = trip.baseCurrency || 'KRW';
 
   if ($('myBudgetTotalText')) {
     let budgetDisplay = `${Math.round(totalBudget).toLocaleString()} ${baseCurr}`;
     if (exchangeAmount > 0) {
-      budgetDisplay += ` (환전: ${exchangeAmount.toLocaleString()} ${exchangeCurrency} / ${exchangeKrw.toLocaleString()}원)`;
+      budgetDisplay += ` (환전: ${exchangeAmount.toLocaleString()} ${exchangeCurrency}${exchangeKrw > 0 ? ` / ${exchangeKrw.toLocaleString()}원` : ''})`;
     }
     $('myBudgetTotalText').textContent = budgetDisplay;
   }
-
   if ($('myBudgetRemainText')) {
     $('myBudgetRemainText').textContent = `${Math.round(remainKrw).toLocaleString()} ${baseCurr}`;
     $('myBudgetRemainText').className =
-      remainKrw < 0 ? 'text-base font-extrabold text-rose-600' : 'text-base font-extrabold text-sky-600';
+      remainKrw < 0
+        ? 'mono-num text-sm font-bold text-[var(--stamp-red)]'
+        : 'mono-num text-sm font-bold text-[var(--stamp-olive)]';
   }
-  
   if ($('myBudgetSpentText')) {
     $('myBudgetSpentText').textContent = `${Math.round(mySpentKrw).toLocaleString()} ${baseCurr}`;
   }
-  
   if ($('myBudgetRemainPercent')) {
     $('myBudgetRemainPercent').textContent = `잔여 ${Math.round(remainPercent)}%`;
   }
-
   const gaugeBar = $('myBudgetGaugeBar');
   if (gaugeBar) {
     gaugeBar.style.width = `${remainPercent}%`;
     gaugeBar.className =
-      remainPercent >= 50
-        ? 'bg-sky-500 h-full rounded-full transition-all duration-300'
-        : remainPercent >= 20
-        ? 'bg-amber-500 h-full rounded-full transition-all duration-300'
-        : 'bg-rose-500 h-full rounded-full transition-all duration-300';
+      remainPercent >= 20
+        ? 'bg-[var(--stamp-olive)] h-full rounded-full transition-all duration-300'
+        : 'bg-[var(--stamp-red)] h-full rounded-full transition-all duration-300';
   }
 
+  // 1/N 최종 정산 영수증 요약 계산
   if ($('groupTotalExpenseKrw')) {
-    $('groupTotalExpenseKrw').textContent = `총 ${Math.round(groupTotalKrw).toLocaleString()}원`;
+    $('groupTotalExpenseKrw').textContent = `총 ${groupTotalKrw.toLocaleString()}원`;
   }
+  const transfersEl = $('settlementTransfersContainer');
+  if (transfersEl) {
+    const debtors = [];
+    const creditors = [];
+    Object.keys(paidByMember).forEach((m) => {
+      const net = (paidByMember[m] || 0) - (owedByMember[m] || 0);
+      if (net < -10) debtors.push({ name: m, amount: Math.abs(net) });
+      else if (net > 10) creditors.push({ name: m, amount: net });
+    });
 
-  const summaryEl = $('settlementTransfersContainer');
-  if (summaryEl) {
-    let transfers = [];
-    try {
-      const settled = calculateOneOverNSettlement(expenses, members, priv.myNickname);
-      if (settled && Array.isArray(settled.transfers)) {
-        transfers = settled.transfers;
-      }
-    } catch (e) {}
-
-    if (transfers.length === 0) {
-      summaryEl.innerHTML = `<p class="text-emerald-300 font-semibold py-1">정산할 송금 차액이 없습니다.</p>`;
-    } else {
-      summaryEl.innerHTML = transfers
-        .map(
-          (t) => `
-          <div class="flex items-center justify-between bg-slate-800 px-3 py-2 rounded-xl">
-            <span><strong class="text-amber-300">${escapeHtml(t.from)}</strong> ➔ <strong class="text-sky-300">${escapeHtml(t.to)}</strong>에게 송금</span>
-            <span class="font-extrabold text-white">${Math.round(t.amount).toLocaleString()}원</span>
+    const lines = [];
+    let dIdx = 0;
+    let cIdx = 0;
+    while (dIdx < debtors.length && cIdx < creditors.length) {
+      const sendAmt = Math.min(debtors[dIdx].amount, creditors[cIdx].amount);
+      if (sendAmt > 0) {
+        lines.push(`
+          <div class="receipt-item">
+            <span><strong>${escapeHtml(debtors[dIdx].name)}</strong> ➔ <strong>${escapeHtml(creditors[cIdx].name)}</strong></span>
+            <span class="mono-num font-bold text-[var(--stamp-red)]">${Math.round(sendAmt).toLocaleString()} KRW</span>
           </div>
-        `
-        )
-        .join('');
+        `);
+      }
+      debtors[dIdx].amount -= sendAmt;
+      creditors[cIdx].amount -= sendAmt;
+      if (debtors[dIdx].amount <= 10) dIdx++;
+      if (creditors[cIdx].amount <= 10) cIdx++;
     }
+
+    transfersEl.innerHTML =
+      lines.length > 0
+        ? lines.join('')
+        : `<p class="text-[11px] text-[var(--ink-secondary)] py-1">정산할 차액이 없거나 모두 정산 균형 상태입니다.</p>`;
   }
 
+  // 개별 지출 영수증 리스트 렌더링
   const listEl = $('expenseListContainer');
   if (!listEl) return;
 
   if (expenses.length === 0) {
     listEl.innerHTML = `
-      <div class="py-10 text-center bg-white rounded-2xl border border-dashed border-slate-200 text-slate-400">
-        <i class="fa-solid fa-receipt text-2xl mb-1.5 text-slate-300"></i>
-        <p class="text-xs">등록된 지출 내역이 없습니다. [지출 추가] 버튼을 눌러보세요.</p>
+      <div class="py-10 px-4 text-center bg-[var(--paper-surface)] rounded-[12px] border border-dashed border-[var(--paper-border)] text-[var(--ink-secondary)] space-y-1.5">
+        <i data-lucide="receipt" class="line-icon-lg mx-auto text-[var(--ink-secondary)]"></i>
+        <p class="text-xs font-bold text-[var(--ink-primary)]">등록된 지출 내역이 없습니다.</p>
+        <p class="text-[11px]">[+ 지출 추가] 버튼을 눌러 영수증을 기록해 보세요.</p>
       </div>
     `;
+    if (window.lucide) window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
     return;
   }
 
-listEl.innerHTML = [...expenses]
-  .reverse()
-  .map((exp) => {
-    const amt = Number(exp.amount) || 0;
-    const curr = (exp.currency || 'KRW').toUpperCase();
-    const rate = Number(exp.rateToKrw) || 1;
-    const krwVal = Math.round(amt * rate);
-    const participants = Array.isArray(exp.participants) ? exp.participants : [exp.payer];
-    const isPersonal = participants.length === 1;
+  listEl.innerHTML = [...expenses]
+    .reverse()
+    .map((exp) => {
+      const amt = Number(exp.amount) || 0;
+      const curr = (exp.currency || 'KRW').toUpperCase();
+      const rate = Number(exp.rateToKrw) || 1;
+      const krwVal = Math.round(amt * rate);
+      const participants = Array.isArray(exp.participants) && exp.participants.length > 0 ? exp.participants : [exp.payer];
+      const isPersonal = participants.length === 1;
 
-    // [추가] 참여자별 정산 확인 체크박스 HTML 생성
-    const settledList = Array.isArray(exp.settledMembers) ? exp.settledMembers : [exp.payer];
-    const participantCheckboxesHtml = members.map((m) => {
-      // 분담에 포함되지 않은 멤버는 건너뛰거나 비활성화 처리할 수 있습니다. (여기서는 전체 members 기준 또는 participants 기준 선택 가능)
-      if (!participants.includes(m)) return '';
-      const isPayer = (m === exp.payer);
-      const isChecked = isPayer || settledList.includes(m);
+      const settledList = Array.isArray(exp.settledMembers) ? exp.settledMembers : [exp.payer];
+      const isAllSettled = participants.every((p) => p === exp.payer || settledList.includes(p));
+
+      const participantCheckboxesHtml = members
+        .map((m) => {
+          if (!participants.includes(m)) return '';
+          const isPayer = m === exp.payer;
+          const isChecked = isPayer || settledList.includes(m);
+
+          return `
+            <label class="inline-flex items-center gap-1 text-[11px] bg-[var(--paper-surface)] border border-[var(--paper-border)] px-2 py-0.5 rounded-[8px] ${
+              isPayer ? 'opacity-80 cursor-default' : 'cursor-pointer hover:border-[var(--ink-primary)]'
+            }">
+              <input
+                type="checkbox"
+                data-action="toggle-expense-settlement"
+                data-expense-id="${escapeHtml(exp.id)}"
+                data-member="${escapeHtml(m)}"
+                ${isChecked ? 'checked' : ''}
+                ${isPayer ? 'disabled' : ''}
+                class="w-3.5 h-3.5 rounded border-[var(--paper-border)] accent-[var(--stamp-blue)]"
+              />
+              <span class="font-semibold ${isChecked && !isPayer ? 'line-through text-[var(--ink-secondary)]' : 'text-[var(--ink-primary)]'}">${escapeHtml(m)}</span>
+            </label>
+          `;
+        })
+        .join('');
 
       return `
-        <label class="inline-flex items-center gap-1 text-[11px] bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-lg ${isPayer ? 'opacity-90 cursor-default' : 'cursor-pointer hover:bg-sky-50'}">
-          <input 
-            type="checkbox" 
-            data-action="toggle-expense-settlement" 
-            data-expense-id="${escapeHtml(exp.id)}" 
-            data-member="${escapeHtml(m)}"
-            ${isChecked ? 'checked' : ''} 
-            ${isPayer ? 'disabled' : ''}
-            class="w-3.5 h-3.5 rounded border-slate-300 text-sky-600 focus:ring-sky-500" 
-          />
-          <span class="font-bold text-slate-700">${escapeHtml(m)}</span>
-        </label>
-      `;
-    }).join('');
-
-    return `
-      <div class="kinfolk-card p-3.5 rounded-2xl shadow-xs space-y-2">
-        <div class="flex items-start justify-between gap-2">
-          <div class="min-w-0 flex-1">
-            <div class="flex items-center gap-1.5 flex-wrap">
-              <span class="text-[10px] font-bold px-1.5 py-0.5 rounded ${isPersonal ? 'bg-emerald-100 text-emerald-700' : 'bg-sky-100 text-sky-700'}">
-                ${isPersonal ? '개인 지출' : `1/${participants.length} 분담`}
-              </span>
-              ${exp.bookingId ? '<span class="text-[9px] font-bold bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded">예약연동</span>' : ''}
-              <h4 class="text-xs font-extrabold text-slate-800 truncate">${escapeHtml(exp.title)}</h4>
+        <div class="receipt-ledger space-y-2">
+          <div class="receipt-item ${isAllSettled ? 'settled' : ''} items-start gap-2">
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-[8px] border border-[var(--paper-border)] ${
+                  isPersonal
+                    ? 'bg-[var(--paper-card-alt)] text-[var(--stamp-olive)]'
+                    : 'bg-[var(--paper-surface)] text-[var(--stamp-blue)]'
+                }">
+                  ${isPersonal ? '개인 지출' : `1/${participants.length} 분담`}
+                </span>
+                ${
+                  exp.bookingId
+                    ? '<span class="text-[10px] font-bold bg-[var(--paper-card-alt)] text-[var(--ink-secondary)] border border-[var(--paper-border)] px-2 py-0.5 rounded-[8px]">예약연동</span>'
+                    : ''
+                }
+                <h4 class="font-sans text-xs font-bold text-[var(--ink-primary)] truncate">${escapeHtml(exp.title)}</h4>
+              </div>
+              <p class="font-sans text-[11px] text-[var(--ink-secondary)] mt-1">
+                결제자: <strong class="text-[var(--ink-primary)]">${escapeHtml(exp.payer)}</strong>
+              </p>
+              ${
+                curr !== 'KRW'
+                  ? `<p class="mono-num text-[10px] text-[var(--ink-secondary)] mt-0.5">환율 1 ${curr} = ${rate.toFixed(2)} KRW (${krwVal.toLocaleString()}원)</p>`
+                  : ''
+              }
             </div>
-            <p class="text-[11px] text-slate-500 mt-1">
-              결제자: <strong class="text-slate-700">${escapeHtml(exp.payer)}</strong>
-            </p>
-            ${curr !== 'KRW' ? `<p class="text-[10px] text-slate-400 mt-0.5">적용 환율 1 ${curr} = ${rate.toFixed(2)} KRW (원화 ${krwVal.toLocaleString()}원)</p>` : ''}
-          </div>
-          <div class="flex items-center gap-0.5 shrink-0">
-            <span class="text-xs font-extrabold text-slate-800 mr-1">${amt.toLocaleString()} ${curr}</span>
-            <button type="button" data-action="edit-expense" data-id="${escapeHtml(exp.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-400 hover:text-sky-600 transition" title="지출 수정">
-              <i class="fa-solid fa-pen text-xs pointer-events-none"></i>
-            </button>
-            <button type="button" data-action="delete-expense" data-id="${escapeHtml(exp.id)}" class="touch-target flex items-center justify-center rounded-lg text-slate-300 hover:text-rose-500 transition" title="지출 삭제">
-              <i class="fa-solid fa-trash-can text-xs pointer-events-none"></i>
-            </button>
-          </div>
-        </div>
 
-        <!-- [추가된 정산 참여자 체크박스 영역] 장황한 텍스트 없이 직관적인 버튼/체크박스로만 구성 -->
-        <div class="flex items-center gap-1.5 flex-wrap pt-1.5 border-t border-slate-100">
-          <span class="text-[11px] font-bold text-slate-400 mr-1">정산 확인:</span>
-          ${participantCheckboxesHtml}
+            <div class="flex items-center gap-0.5 shrink-0">
+              <span class="mono-num text-xs font-bold text-[var(--ink-primary)] mr-1">${amt.toLocaleString()} ${curr}</span>
+              <button type="button" data-action="edit-expense" data-id="${escapeHtml(exp.id)}" class="touch-target flex items-center justify-center rounded-[8px] text-[var(--ink-secondary)] hover:text-[var(--ink-primary)] transition" title="지출 수정">
+                <i data-lucide="pen-line" class="line-icon-sm pointer-events-none"></i>
+              </button>
+              <button type="button" data-action="delete-expense" data-id="${escapeHtml(exp.id)}" class="touch-target flex items-center justify-center rounded-[8px] text-[var(--ink-secondary)] hover:text-[var(--stamp-red)] transition" title="지출 삭제">
+                <i data-lucide="trash-2" class="line-icon-sm pointer-events-none"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- 정산 참여자 체크박스 영역 -->
+          <div class="font-sans flex items-center gap-1.5 flex-wrap pt-1">
+            <span class="text-[11px] font-semibold text-[var(--ink-secondary)] mr-1">정산 확인:</span>
+            ${participantCheckboxesHtml}
+          </div>
         </div>
-      </div>
-    `;
-  })
-  .join('');
+      `;
+    })
+    .join('');
+
+  if (window.lucide) {
+    window.lucide.createIcons({ attrs: { 'stroke-width': 1.5 } });
+  }
 }
 
 function renderPhotosTab(trip) {

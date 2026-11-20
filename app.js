@@ -1965,11 +1965,9 @@ async function openNewTripModal() {
   if (newTripCurrencySelect) {
     populateCurrencySelect(newTripCurrencySelect, { customCurrencies: ['JPY', 'USD', 'EUR'] }, 'KRW');
   }
-
   if ($('inputNewTripMyBudget')) $('inputNewTripMyBudget').value = '1500000';
   if ($('inputNewTripHeadcount')) $('inputNewTripHeadcount').value = '2';
   if ($('inputNewTripMembers')) $('inputNewTripMembers').value = '나, 동행1';
-
   openModalSafe('modalNewTrip');
 }
 
@@ -2016,7 +2014,7 @@ function openJoinMemberSelectionModal(trip) {
 
   if (companionNames.length === 0) {
     listEl.innerHTML = `
-      <div class="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold">
+      <div class="p-3.5 rounded-[12px] bg-[var(--paper-card-alt)] border border-[var(--stamp-red)] text-[var(--stamp-red)] text-xs font-bold">
         이 여행은 1인 여행(${escapeHtml(creatorName)})으로 설정되어 있어 추가 합류할 수 있는 동행자 명단이 없습니다.
       </div>
     `;
@@ -2043,10 +2041,10 @@ function openJoinMemberSelectionModal(trip) {
       }
 
       return `
-        <label class="flex items-center justify-between p-3 rounded-xl border transition ${
+        <label class="flex items-center justify-between p-3 rounded-[10px] border transition ${
           isTakenByOther
-            ? 'bg-slate-100 border-slate-200 opacity-60 cursor-not-allowed'
-            : 'bg-slate-50 hover:bg-sky-50/60 border-slate-200 cursor-pointer'
+            ? 'bg-[var(--paper-card-alt)] border-[var(--paper-border)] opacity-60 cursor-not-allowed'
+            : 'bg-[var(--paper-bg)] hover:bg-[var(--paper-card-alt)] border-[var(--paper-border)] cursor-pointer'
         }">
           <div class="flex items-center gap-2.5">
             <input
@@ -2055,18 +2053,18 @@ function openJoinMemberSelectionModal(trip) {
               value="${escapeHtml(name)}"
               ${checkedAttr}
               ${isTakenByOther ? 'disabled' : ''}
-              class="join-member-chk w-4 h-4 rounded border-slate-300 text-sky-600 focus:ring-sky-500"
+              class="join-member-chk w-4 h-4 rounded border-[var(--paper-border)] accent-[var(--ink-primary)]"
             />
-            <span class="text-xs font-extrabold ${isTakenByOther ? 'line-through text-slate-400' : 'text-slate-800'}">
+            <span class="text-xs font-bold ${isTakenByOther ? 'line-through text-[var(--ink-secondary)]' : 'text-[var(--ink-primary)]'}">
               ${escapeHtml(name)}
             </span>
           </div>
-          <span class="text-[10px] font-bold px-2 py-0.5 rounded ${
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-[8px] border border-[var(--paper-border)] ${
             isTakenByOther
-              ? 'bg-slate-200 text-slate-500'
+              ? 'bg-[var(--paper-card-alt)] text-[var(--ink-secondary)]'
               : isMine
-              ? 'bg-emerald-100 text-emerald-700'
-              : 'bg-sky-100 text-sky-700'
+              ? 'bg-[var(--paper-card-alt)] text-[var(--stamp-olive)]'
+              : 'bg-[var(--paper-surface)] text-[var(--stamp-blue)]'
           }">
             ${isTakenByOther ? '참여 완료 (선택 불가)' : isMine ? '내 기존 선택' : '선택 가능'}
           </span>
@@ -2076,9 +2074,9 @@ function openJoinMemberSelectionModal(trip) {
     .join('');
 
   listEl.innerHTML = `
-    <div class="px-2 py-1.5 rounded-lg bg-slate-100 text-[11px] text-slate-600 flex items-center justify-between">
-      <span>👑 방장: <strong>${escapeHtml(creatorName)}</strong></span>
-      <span>동행 정원: ${companionNames.length}명</span>
+    <div class="px-2.5 py-1.5 rounded-[10px] bg-[var(--paper-card-alt)] border border-[var(--paper-border)] text-[11px] text-[var(--ink-secondary)] flex items-center justify-between">
+      <span>방장: <strong class="text-[var(--ink-primary)]">${escapeHtml(creatorName)}</strong></span>
+      <span class="mono-num">동행 정원: ${companionNames.length}명</span>
     </div>
     ${itemsHtml}
   `;
@@ -2086,7 +2084,6 @@ function openJoinMemberSelectionModal(trip) {
   if (submitBtn) {
     submitBtn.disabled = availableCount === 0;
   }
-
   openModalSafe('modalSelectJoinMember');
 }
 
